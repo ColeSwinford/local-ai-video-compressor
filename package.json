@@ -1,0 +1,21 @@
+{
+  "name": "wasm-video-comrpessor",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/dom-webcodecs": "^0.1.18",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "mp4-muxer": "^5.2.2",
+    "mp4box": "^2.4.1",
+    "onnxruntime-web": "^1.27.0"
+  }
+}
