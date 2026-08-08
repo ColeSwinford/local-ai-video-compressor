@@ -1,227 +1,246 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Video Compressor</title>
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <!-- Main macOS Window Container -->
-    <div id="app" class="macos-window">
-      <!-- Hidden Video Element for Instant Upload First-Frame Extraction -->
-      <video id="preview-video-source" style="display: none;" preload="auto" muted></video>
 
-      <!-- macOS Titlebar -->
-      <header class="window-titlebar">
-        <div class="window-controls traffic-lights">
-          <span class="control-dot close" id="close-btn" title="Close Window">
-            <svg class="dot-icon" width="6" height="6" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>
-          </span>
-          <span class="control-dot minimize" id="minimize-btn" title="Minimize">
-            <svg class="dot-icon" width="6" height="2" viewBox="0 0 12 2" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 1h10"/></svg>
-          </span>
-          <span class="control-dot maximize" id="maximize-btn" title="Maximize">
-            <svg class="dot-icon" width="6" height="6" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M2 10L10 2M10 2H4M10 2V8"/></svg>
-          </span>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Compressor</title>
+  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+
+<body>
+  <!-- Main macOS Window Container -->
+  <div id="app" class="macos-window">
+    <!-- Hidden Video Element for Instant Upload First-Frame Extraction -->
+    <video id="preview-video-source" style="display: none;" preload="auto" muted></video>
+
+    <!-- macOS Titlebar -->
+    <header class="window-titlebar">
+      <div class="window-controls traffic-lights">
+        <span class="control-dot close" id="close-btn" title="Close Window">
+          <svg class="dot-icon" width="6" height="6" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+            stroke-width="2.5" stroke-linecap="round">
+            <path d="M2 2l8 8M10 2l-8 8" />
+          </svg>
+        </span>
+        <span class="control-dot minimize" id="minimize-btn" title="Minimize">
+          <svg class="dot-icon" width="6" height="2" viewBox="0 0 12 2" fill="none" stroke="currentColor"
+            stroke-width="2.5" stroke-linecap="round">
+            <path d="M1 1h10" />
+          </svg>
+        </span>
+        <span class="control-dot maximize" id="maximize-btn" title="Maximize">
+          <svg class="dot-icon" width="6" height="6" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+            stroke-width="2.5" stroke-linecap="round">
+            <path d="M2 10L10 2M10 2H4M10 2V8" />
+          </svg>
+        </span>
+      </div>
+      <div class="window-title">Video Compressor</div>
+      <div class="status-badge" id="status-badge">
+        <span class="status-dot"></span>
+        <span id="status-text">Ready</span>
+      </div>
+    </header>
+
+    <!-- Main Split-Pane Content -->
+    <main class="window-body">
+      <!-- Panel 1: Original Source -->
+      <section class="panel-card">
+        <div class="panel-header">
+          <h2>Original Source</h2>
+          <button id="change-file-btn" class="icon-btn hidden" title="Change Video File">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+            </svg>
+            <span>Change File</span>
+          </button>
         </div>
-        <div class="window-title">Video Compressor</div>
-        <div class="status-badge" id="status-badge">
-          <span class="status-dot"></span>
-          <span id="status-text">Ready</span>
-        </div>
-      </header>
 
-      <!-- Main Split-Pane Content -->
-      <main class="window-body">
-        <!-- Panel 1: Original Source -->
-        <section class="panel-card">
-          <div class="panel-header">
-            <h2>Original Source</h2>
-            <button id="change-file-btn" class="icon-btn hidden" title="Change Video File">
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-              </svg>
-              <span>Change File</span>
-            </button>
-          </div>
-
-          <!-- Dropzone Container -->
-          <div id="dropzone-container">
-            <div class="dropzone" id="dropzone">
-              <input type="file" id="file-input" accept="video/mp4,video/*" />
-              <div class="dropzone-content">
-                <div class="upload-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                  </svg>
-                </div>
-                <p class="dropzone-text">Drop video file here or <span>browse</span></p>
-                <p class="dropzone-hint">Supports MP4, MOV, HEVC, H.264, VP9, AV1</p>
+        <!-- Dropzone Container -->
+        <div id="dropzone-container">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file-input" accept="video/mp4,video/*" />
+            <div class="dropzone-content">
+              <div class="upload-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
               </div>
+              <p class="dropzone-text">Drop video file here or <span>browse</span></p>
+              <p class="dropzone-hint">Supports MP4, MOV, HEVC, H.264, VP9, AV1</p>
             </div>
           </div>
-
-          <!-- Source Video Player Container -->
-          <div id="source-video-container" class="player-wrapper hidden">
-            <video id="source-video-player" controls class="source-video"></video>
-          </div>
-
-          <!-- Metadata Rows (macOS Inspector Style) -->
-          <div class="inspector-rows">
-            <div class="inspector-row">
-              <span class="row-label">File Name</span>
-              <span class="row-value truncate" id="src-filename">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Original Size</span>
-              <span class="row-value" id="src-size">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Resolution</span>
-              <span class="row-value" id="src-resolution">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Duration</span>
-              <span class="row-value" id="src-duration">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Source Codec</span>
-              <span class="row-value truncate" id="src-codec">—</span>
-            </div>
-          </div>
-
-          <div class="controls-divider"></div>
-
-          <!-- Target Resolution Control -->
-          <div class="control-group">
-            <label for="resolution-select" class="control-label">Target Resolution</label>
-            <select id="resolution-select" class="macos-select">
-              <option value="auto" selected>Auto (Source Resolution)</option>
-              <option value="1080">1080p (Max 1920x1080)</option>
-              <option value="720">720p (Max 1280x720)</option>
-              <option value="480">480p (Max 854x480)</option>
-            </select>
-          </div>
-
-          <!-- FPS Selector Control -->
-          <div class="control-group">
-            <label for="fps-select" class="control-label">Target Framerate</label>
-            <select id="fps-select" class="macos-select">
-              <option value="auto" selected>Auto (Source FPS)</option>
-              <option value="60">60 FPS</option>
-              <option value="30">30 FPS (Recommended)</option>
-              <option value="24">24 FPS</option>
-              <option value="15">15 FPS (Extreme Compression)</option>
-            </select>
-          </div>
-
-          <!-- Target Size Slider Control -->
-          <div class="control-group">
-            <div class="control-label-row">
-              <label for="target-size-range" class="control-label">Target Compressed Size</label>
-              <div class="number-input-wrapper">
-                <input type="number" id="target-size-number" min="1" max="50" value="10" step="0.1" class="macos-number-input" />
-                <span class="unit-text">MB</span>
-              </div>
-            </div>
-            <input type="range" id="target-size-range" min="1" max="50" value="10" step="0.5" class="macos-slider" />
-          </div>
-
-          <button id="startBtn" class="macos-btn-primary" disabled>Start Compression</button>
-
-          <!-- Progress Bar -->
-          <div class="progress-container hidden" id="progress-container">
-            <div class="progress-info">
-              <span id="progress-label">Reading file chunks...</span>
-              <span id="progress-percent">0%</span>
-            </div>
-            <div class="progress-bar-track">
-              <div class="progress-bar-fill" id="progress-bar"></div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Panel 2: Compressed Result -->
-        <section class="panel-card">
-          <div class="panel-header">
-            <h2>Compressed Result</h2>
-            <span class="badge-tag" id="result-badge">AI 2-Pass VBR</span>
-          </div>
-
-          <div class="player-wrapper">
-            <canvas id="canvas"></canvas>
-            <video id="output-video-player" controls class="output-video hidden"></video>
-            <div class="player-placeholder" id="canvas-placeholder">
-              <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polygon points="10 8 16 12 10 16 10 8"></polygon>
-              </svg>
-              <p>Drop a video file to begin</p>
-            </div>
-          </div>
-
-          <!-- Metadata Rows (macOS Inspector Style) -->
-          <div class="inspector-rows">
-            <div class="inspector-row">
-              <span class="row-label">Output Codec</span>
-              <span class="row-value truncate" id="meta-codec">H.264 High Profile (avc1.64002a)</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Output Resolution</span>
-              <span class="row-value" id="meta-resolution">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Target Bitrate</span>
-              <span class="row-value accent-blue" id="meta-bitrate">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Encoding Speed</span>
-              <span class="row-value" id="meta-fps">0 FPS</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Output Size</span>
-              <span class="row-value accent-blue" id="meta-size">—</span>
-            </div>
-            <div class="inspector-row">
-              <span class="row-label">Savings</span>
-              <span class="row-value accent-green" id="meta-savings">—</span>
-            </div>
-          </div>
-
-          <!-- Download Action Area -->
-          <div id="download-container" class="download-area hidden">
-            <button id="download-btn" class="macos-btn-primary">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" y1="15" x2="12" y2="3"></line>
-              </svg>
-              Download MP4
-            </button>
-          </div>
-        </section>
-      </main>
-
-      <!-- Event Logs Terminal (macOS Collapsible Drawer) -->
-      <details id="log-details" class="logs-drawer">
-        <summary class="log-toggle">
-          <span>Console Output & Diagnostics</span>
-          <button id="clear-logs" class="btn-text">Clear</button>
-        </summary>
-        <div class="logs-terminal" id="logs-terminal">
-          <div class="log-line info">[System] Application initialized. Waiting for MP4 file input.</div>
         </div>
-      </details>
-    </div>
 
-    <footer class="app-footer">
-      Designed and built by <a href="https://github.com/ColeSwinford/wasm-video-compressor" target="_blank" rel="noopener noreferrer"><strong>Cole Swinford</strong></a>
-    </footer>
+        <!-- Source Video Player Container -->
+        <div id="source-video-container" class="player-wrapper hidden">
+          <video id="source-video-player" controls class="source-video"></video>
+        </div>
 
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+        <!-- Metadata Rows (macOS Inspector Style) -->
+        <div class="inspector-rows">
+          <div class="inspector-row">
+            <span class="row-label">File Name</span>
+            <span class="row-value truncate" id="src-filename">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Original Size</span>
+            <span class="row-value" id="src-size">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Resolution</span>
+            <span class="row-value" id="src-resolution">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Duration</span>
+            <span class="row-value" id="src-duration">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Source Codec</span>
+            <span class="row-value truncate" id="src-codec">—</span>
+          </div>
+        </div>
+
+        <div class="controls-divider"></div>
+
+        <!-- Target Resolution Control -->
+        <div class="control-group">
+          <label for="resolution-select" class="control-label">Target Resolution</label>
+          <select id="resolution-select" class="macos-select">
+            <option value="auto" selected>Auto (Source Resolution)</option>
+            <option value="1080">1080p (Max 1920x1080)</option>
+            <option value="720">720p (Max 1280x720)</option>
+            <option value="480">480p (Max 854x480)</option>
+          </select>
+        </div>
+
+        <!-- FPS Selector Control -->
+        <div class="control-group">
+          <label for="fps-select" class="control-label">Target Framerate</label>
+          <select id="fps-select" class="macos-select">
+            <option value="auto" selected>Auto (Source FPS)</option>
+            <option value="60">60 FPS</option>
+            <option value="30">30 FPS (Recommended)</option>
+            <option value="24">24 FPS</option>
+            <option value="15">15 FPS (Extreme Compression)</option>
+          </select>
+        </div>
+
+        <!-- Target Size Slider Control -->
+        <div class="control-group">
+          <div class="control-label-row">
+            <label for="target-size-range" class="control-label">Target Compressed Size</label>
+            <div class="number-input-wrapper">
+              <input type="number" id="target-size-number" min="1" max="50" value="10" step="0.1"
+                class="macos-number-input" />
+              <span class="unit-text">MB</span>
+            </div>
+          </div>
+          <input type="range" id="target-size-range" min="1" max="50" value="10" step="0.5" class="macos-slider" />
+        </div>
+
+        <button id="startBtn" class="macos-btn-primary" disabled>Start Compression</button>
+
+        <!-- Progress Bar -->
+        <div class="progress-container hidden" id="progress-container">
+          <div class="progress-info">
+            <span id="progress-label">Reading file chunks...</span>
+            <span id="progress-percent">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-bar"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 2: Compressed Result -->
+      <section class="panel-card">
+        <div class="panel-header">
+          <h2>Compressed Result</h2>
+          <span class="badge-tag" id="result-badge">AI 2-Pass VBR</span>
+        </div>
+
+        <div class="player-wrapper">
+          <canvas id="canvas"></canvas>
+          <video id="output-video-player" controls class="output-video hidden"></video>
+          <div class="player-placeholder" id="canvas-placeholder">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polygon points="10 8 16 12 10 16 10 8"></polygon>
+            </svg>
+            <p>Drop a video file to begin</p>
+          </div>
+        </div>
+
+        <!-- Metadata Rows (macOS Inspector Style) -->
+        <div class="inspector-rows">
+          <div class="inspector-row">
+            <span class="row-label">Output Codec</span>
+            <span class="row-value truncate" id="meta-codec">H.264 High Profile (avc1.64002a)</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Output Resolution</span>
+            <span class="row-value" id="meta-resolution">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Target Bitrate</span>
+            <span class="row-value accent-blue" id="meta-bitrate">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Encoding Speed</span>
+            <span class="row-value" id="meta-fps">0 FPS</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Output Size</span>
+            <span class="row-value accent-blue" id="meta-size">—</span>
+          </div>
+          <div class="inspector-row">
+            <span class="row-label">Savings</span>
+            <span class="row-value accent-green" id="meta-savings">—</span>
+          </div>
+        </div>
+
+        <!-- Download Action Area -->
+        <div id="download-container" class="download-area hidden">
+          <button id="download-btn" class="macos-btn-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download MP4
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Event Logs Terminal (macOS Collapsible Drawer) -->
+    <details id="log-details" class="logs-drawer">
+      <summary class="log-toggle">
+        <span>Console Output & Diagnostics</span>
+        <button id="clear-logs" class="btn-text">Clear</button>
+      </summary>
+      <div class="logs-terminal" id="logs-terminal">
+        <div class="log-line info">[System] Application initialized. Waiting for MP4 file input.</div>
+      </div>
+    </details>
+  </div>
+
+  <footer class="app-footer">
+    Designed and built by <a href="https://github.com/ColeSwinford/wasm-video-compressor" target="_blank"
+      rel="noopener noreferrer"><strong>Cole Swinford</strong></a>
+  </footer>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>
