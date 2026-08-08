@@ -148,6 +148,7 @@ export class Demuxer {
   private videoSamples: EncodedVideoChunk[] = [];
   private audioSamples: EncodedAudioChunk[] = [];
   private rawVideoSamples: DemuxedSampleInfo[] = [];
+  private demuxError: Error | null = null;
 
   constructor(callbacks: DemuxerCallbacks) {
     this.callbacks = callbacks;
@@ -158,8 +159,10 @@ export class Demuxer {
   private setupMp4boxEvents(): void {
     this.mp4file.onError = (err) => {
       console.error('[Demuxer] MP4Box error:', err);
+      const errorObj = typeof err === 'string' ? new Error(err) : err;
+      this.demuxError = errorObj;
       if (this.callbacks.onError) {
-        this.callbacks.onError(typeof err === 'string' ? new Error(err) : err);
+        this.callbacks.onError(errorObj);
       }
     };
 
@@ -167,6 +170,7 @@ export class Demuxer {
       const videoTrack = info.videoTracks[0] || info.tracks.find((t: MP4MediaTrack) => (t as any).type === 'video');
       if (!videoTrack) {
         const err = new Error('No video track found in the provided MP4 file.');
+        this.demuxError = err;
         if (this.callbacks.onError) this.callbacks.onError(err);
         return;
       }
@@ -318,6 +322,14 @@ export class Demuxer {
     this.selectedVideoTrackId = null;
     this.selectedAudioTrackId = null;
     this.isCancelled = false;
+    this.demuxError = null;
+  }
+
+  /**
+   * Alias for demuxFile for API consistency.
+   */
+  public async demux(file: File): Promise<void> {
+    return this.demuxFile(file);
   }
 
   /**
@@ -354,10 +366,17 @@ export class Demuxer {
     console.log(`[Demuxer] Appending full buffer (${buffer.byteLength} bytes) to MP4Box...`);
     this.mp4file.appendBuffer(buffer as any);
 
+    if (this.demuxError) {
+      throw this.demuxError;
+    }
+
     if (!this.isCancelled) {
       console.log(`[Demuxer] File buffer appended. Total video samples emitted so far: ${this.sampleCount}. Flushing MP4Box...`);
       this.mp4file.flush();
       console.log(`[Demuxer] MP4Box flush complete. Total video samples emitted: ${this.sampleCount}.`);
+      if (this.demuxError) {
+        throw this.demuxError;
+      }
       if (this.callbacks.onComplete) {
         this.callbacks.onComplete();
       }
