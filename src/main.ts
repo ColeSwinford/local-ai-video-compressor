@@ -563,13 +563,10 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         if (progressBar) progressBar.style.width = `${percent}%`;
         if (progressPercent) progressPercent.textContent = `${percent}% (Pass 1)`;
       },
-      onError: (err: any) => {
-        log(err?.message || String(err), 'error');
-      },
     });
 
     // Run Pass 1 File Demuxing & Decoding
-    await currentDemuxer.demux(file);
+    await currentDemuxer.demuxFile(file);
     if (currentDecoder) {
       await currentDecoder.flush();
     }
@@ -945,13 +942,10 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         if (progressBar) progressBar.style.width = `${percent}%`;
         if (progressPercent) progressPercent.textContent = `${percent}% (Pass 2)`;
       },
-      onError: (err: any) => {
-        log(err?.message || String(err), 'error');
-      },
     });
 
     // Run Pass 2 File Demuxing & Encoding
-    await currentDemuxer.demux(file);
+    await currentDemuxer.demuxFile(file);
 
     logMessage(
       `Pass 2 reading complete (${currentDemuxer.getSampleCount()} / ${expectedVideoSamples} video samples demuxed). Flushing VideoDecoder...`,
@@ -1026,7 +1020,7 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
     }
   } catch (err: any) {
     console.error('[Pipeline Error Detail]:', err);
-    log(err?.message || String(err), 'error');
+    logMessage(`Pipeline error: ${err?.stack || err?.message || err}`, 'error');
     setStatus('error', 'Error');
     if (startBtn) {
       startBtn.disabled = false;

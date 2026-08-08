@@ -49,23 +49,23 @@ export class SceneComplexityDetector {
   }
 
   /**
-   * Initializes the ONNX InferenceSession using WebGPU with WebAssembly (WASM) fallback.
+   * Initializes the ONNX InferenceSession using WebGPU execution provider.
    */
   public async init(): Promise<boolean> {
-    const isWebGPUSupported = typeof navigator !== 'undefined' && 'gpu' in navigator;
-    const executionProviders = isWebGPUSupported ? ['webgpu', 'wasm'] : ['wasm'];
-
     try {
-      console.log(`[Complexity] Attempting to load ONNX classification model from ${this.modelUrl} with providers: ${executionProviders.join(', ')}...`);
+      console.log(`[Complexity] Attempting to load ONNX classification model from ${this.modelUrl} with WebGPU...`);
       this.session = await ort.InferenceSession.create(this.modelUrl, {
-        executionProviders: executionProviders,
+        executionProviders: ['webgpu'],
       });
-      console.log(`[Complexity] ONNX classification session created successfully (${isWebGPUSupported ? 'WebGPU/WASM' : 'WASM'}).`);
+      console.log('[Complexity] ONNX WebGPU classification session created successfully.');
       this.isFallbackMode = false;
       return true;
-    } catch (error: any) {
-      console.error("ONNX Initialization failed:", error);
-      throw new Error(`AI Model initialization failed: ${error.message}`);
+    } catch (err: any) {
+      console.warn(
+        `[Complexity] WebGPU session creation for ${this.modelUrl} unfulfilled (${err?.message || err}). Activating scaffold/fallback mode.`,
+      );
+      this.isFallbackMode = true;
+      return false;
     }
   }
 
