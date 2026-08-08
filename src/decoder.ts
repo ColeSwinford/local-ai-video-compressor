@@ -2,6 +2,7 @@ export interface VideoDecoderCallbacks {
   onFrame?: (frame: VideoFrame, frameIndex: number) => Promise<void> | void;
   onFrameDecoded?: (frameIndex: number, timestampUs: number) => void;
   onError?: (error: DOMException | Error) => void;
+  getEncodeQueueSize?: () => number;
 }
 
 export class DecoderWrapper {
@@ -11,6 +12,11 @@ export class DecoderWrapper {
   private frameCount = 0;
   private callbacks: VideoDecoderCallbacks;
 
+  private isErrored = false;
+  private chunkQueue: EncodedVideoChunk[] = [];
+  private isProcessingQueue = false;
+  private getEncodeQueueSize?: () => number;
+
   constructor(canvas: HTMLCanvasElement, callbacks: VideoDecoderCallbacks = {}) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d');
@@ -19,6 +25,7 @@ export class DecoderWrapper {
     }
     this.ctx = ctx;
     this.callbacks = callbacks;
+    this.getEncodeQueueSize = callbacks.getEncodeQueueSize;
 
     if (typeof VideoDecoder === 'undefined') {
       throw new Error('WebCodecs VideoDecoder API is not supported in this browser environment.');
@@ -28,6 +35,7 @@ export class DecoderWrapper {
       output: (frame: VideoFrame) => this.handleFrame(frame),
       error: (err: DOMException) => {
         console.error('[Decoder] WebCodecs VideoDecoder error:', err);
+        this.isErrored = true;
         if (this.callbacks.onError) {
           this.callbacks.onError(err);
         }
@@ -88,14 +96,42 @@ export class DecoderWrapper {
   }
 
   /**
-   * Enqueues an EncodedVideoChunk into the WebCodecs decoder.
+   * Enqueues an EncodedVideoChunk into the internal FIFO chunkQueue and starts async queue consumption.
    */
   public decode(chunk: EncodedVideoChunk): void {
-    if (this.decoder.state === 'configured') {
-      this.decoder.decode(chunk);
-    } else {
-      console.warn('[Decoder] VideoDecoder is not in configured state:', this.decoder.state);
+    if (this.isErrored) return;
+    this.chunkQueue.push(chunk);
+    this.processQueue();
+  }
+
+  /**
+   * Async FIFO queue processor enforcing strict decodeQueueSize and encodeQueueSize ceilings of 4.
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue) return;
+    this.isProcessingQueue = true;
+
+    while (this.chunkQueue.length > 0) {
+      if (this.isErrored || this.decoder.state !== 'configured') {
+        this.chunkQueue = [];
+        break;
+      }
+
+      while (
+        this.decoder.decodeQueueSize > 4 ||
+        (this.getEncodeQueueSize && this.getEncodeQueueSize() > 4)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 4));
+        if (this.isErrored || this.decoder.state !== 'configured') break;
+      }
+
+      const nextChunk = this.chunkQueue.shift();
+      if (nextChunk && this.decoder.state === 'configured') {
+        this.decoder.decode(nextChunk);
+      }
     }
+
+    this.isProcessingQueue = false;
   }
 
   /**
@@ -107,25 +143,27 @@ export class DecoderWrapper {
     const timestampUs = frame.timestamp;
     const frameIndex = this.frameCount;
 
-    if (this.callbacks.onFrame) {
-      try {
+    try {
+      if (this.callbacks.onFrame) {
         await this.callbacks.onFrame(frame, frameIndex);
-      } catch (err: any) {
-        console.error('[Decoder] Error in custom frame processor:', err);
-        // Guarantee closing frame if error occurs in callback
-        try {
-          frame.close();
-        } catch {}
+      } else {
+        // Default direct render to canvas
+        if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
+          this.canvas.width = frame.displayWidth;
+          this.canvas.height = frame.displayHeight;
+        }
+        this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
       }
-    } else {
-      // Default direct render to canvas
-      if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
-        this.canvas.width = frame.displayWidth;
-        this.canvas.height = frame.displayHeight;
+    } catch (err: any) {
+      console.error('[Decoder] Error in frame processor:', err);
+      if (this.callbacks.onError) {
+        this.callbacks.onError(err);
       }
-      this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
-      // CRITICAL: Call frame.close() immediately to avoid memory leaks
-      frame.close();
+    } finally {
+      // CRITICAL MEMORY MANAGEMENT: Guarantee frame is closed immediately to prevent VRAM memory leaks
+      try {
+        frame.close();
+      } catch {}
     }
 
     if (this.callbacks.onFrameDecoded) {
@@ -133,13 +171,23 @@ export class DecoderWrapper {
     }
   }
 
+  /**
+   * Flushes the FIFO queue and VideoDecoder processing queue.
+   */
   public async flush(): Promise<void> {
+    while (this.chunkQueue.length > 0 || (this.decoder?.decodeQueueSize || 0) > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 4));
+      if (this.isErrored) break;
+    }
+
     if (this.decoder.state === 'configured') {
       await this.decoder.flush();
     }
   }
 
   public reset(): void {
+    this.chunkQueue = [];
+    this.isProcessingQueue = false;
     if (this.decoder.state !== 'unconfigured') {
       this.decoder.reset();
     }
@@ -147,9 +195,15 @@ export class DecoderWrapper {
   }
 
   public close(): void {
+    this.chunkQueue = [];
+    this.isProcessingQueue = false;
     if (this.decoder.state !== 'closed') {
       this.decoder.close();
     }
+  }
+
+  public hasError(): boolean {
+    return this.isErrored;
   }
 
   public getFrameCount(): number {
@@ -157,7 +211,7 @@ export class DecoderWrapper {
   }
 
   public getDecodeQueueSize(): number {
-    return this.decoder?.decodeQueueSize || 0;
+    return (this.decoder?.decodeQueueSize || 0) + this.chunkQueue.length;
   }
 
   public getState(): CodecState {

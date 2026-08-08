@@ -10,7 +10,7 @@ export interface EncoderMuxerConfig {
   width: number;
   height: number;
   bitrate?: number;
-  codec?: string;
+  framerate?: number;
   description?: Uint8Array;
   audio?: EncoderMuxerAudioConfig;
 }
@@ -23,15 +23,21 @@ export class EncoderMuxerPipeline {
   private width: number;
   private height: number;
   private currentBitrate: number;
+  private framerate: number;
   private codec: string;
   private description?: Uint8Array;
   private baseConfig: VideoEncoderConfig;
+  private lastTimestampUs = -1;
+  private isErrored = false;
+  private lastError: DOMException | Error | null = null;
+  private framesSinceLastReconfig = 30;
 
   constructor(config: EncoderMuxerConfig) {
     this.width = config.width;
     this.height = config.height;
     this.currentBitrate = config.bitrate || 2_000_000; // Default 2 Mbps
-    this.codec = config.codec || 'avc1.4d002a'; // Standard H.264 Baseline profile
+    this.framerate = config.framerate || 30;
+    this.codec = 'avc1.64002a'; // H.264 High Profile, Level 4.2
     this.description = config.description;
 
     if (typeof VideoEncoder === 'undefined') {
@@ -48,7 +54,7 @@ export class EncoderMuxerPipeline {
       },
       audio: config.audio
         ? {
-            codec: config.audio.codec || 'aac',
+            codec: config.audio.codec === 'opus' ? 'opus' : 'aac',
             numberOfChannels: config.audio.numberOfChannels,
             sampleRate: config.audio.sampleRate,
           }
@@ -57,12 +63,13 @@ export class EncoderMuxerPipeline {
       firstTimestampBehavior: 'offset',
     });
 
-    // 2. Cache base VideoEncoder configuration enforcing Rec.709 color space and strict CBR (Constant Bitrate)
+    // 2. Cache base VideoEncoder configuration enforcing Rec.709 color space, CBR mode, and explicit framerate
     this.baseConfig = {
       codec: this.codec,
       width: this.width,
       height: this.height,
       bitrate: this.currentBitrate,
+      framerate: this.framerate,
       bitrateMode: 'constant',
       hardwareAcceleration: 'prefer-hardware',
       colorSpace: {
@@ -122,6 +129,8 @@ export class EncoderMuxerPipeline {
       },
       error: (err: DOMException) => {
         console.error('[Encoder] WebCodecs VideoEncoder error:', err);
+        this.isErrored = true;
+        this.lastError = err;
       },
     });
 
@@ -129,24 +138,14 @@ export class EncoderMuxerPipeline {
     this.encoder.configure(this.baseConfig);
   }
 
+  public get videoEncoder(): VideoEncoder {
+    return this.encoder;
+  }
+
   /**
-   * Dynamically reconfigures the H.264 VideoEncoder bitrate enforcing strict CBR (Constant Bitrate).
+   * Mid-stream re-configuration is disabled to allow hardware VBR rate controller to manage smooth frame distribution.
    */
-  public reconfigureBitrate(newBitrate: number): boolean {
-    if (this.currentBitrate <= 0) return false;
-    const diffRatio = Math.abs(newBitrate - this.currentBitrate) / this.currentBitrate;
-
-    if (diffRatio > 0.15 && this.encoder.state === 'configured') {
-      this.currentBitrate = newBitrate;
-      this.baseConfig = {
-        ...this.baseConfig,
-        bitrate: newBitrate,
-        bitrateMode: 'constant',
-      };
-      this.encoder.configure(this.baseConfig);
-      return true;
-    }
-
+  public reconfigureBitrate(_newBitrate: number): boolean {
     return false;
   }
 
@@ -155,13 +154,36 @@ export class EncoderMuxerPipeline {
   }
 
   /**
-   * Passes a VideoFrame to the VideoEncoder.
+   * Passes a VideoFrame to the VideoEncoder enforcing strictly monotonic increasing timestamps.
    */
-  public encodeFrame(frame: VideoFrame, frameIndex: number): void {
+  public encodeFrame(frame: VideoFrame, isKeyframe: boolean): void {
+    this.framesSinceLastReconfig++;
+
+    if (this.isErrored) {
+      console.warn('[Encoder] Skipping encodeFrame due to VideoEncoder error state.');
+      return;
+    }
+
     if (this.encoder.state === 'configured') {
-      // Force keyframe every 30 frames for stability and seekability
-      const isKeyframe = frameIndex % 30 === 0;
-      this.encoder.encode(frame, { keyFrame: isKeyframe });
+      let validTimestamp = frame.timestamp;
+      if (validTimestamp <= this.lastTimestampUs) {
+        validTimestamp = this.lastTimestampUs + 1;
+      }
+      this.lastTimestampUs = validTimestamp;
+
+      if (validTimestamp !== frame.timestamp) {
+        const adjustedFrame = new VideoFrame(frame, {
+          timestamp: validTimestamp,
+          duration: (frame.duration !== null && frame.duration !== undefined) ? frame.duration : undefined,
+        });
+        try {
+          this.encoder.encode(adjustedFrame, { keyFrame: isKeyframe });
+        } finally {
+          adjustedFrame.close();
+        }
+      } else {
+        this.encoder.encode(frame, { keyFrame: isKeyframe });
+      }
     } else {
       console.warn('[Encoder] VideoEncoder is not in configured state:', this.encoder.state);
     }
@@ -170,17 +192,25 @@ export class EncoderMuxerPipeline {
   /**
    * Passes an EncodedAudioChunk directly into MP4 Muxer for audio passthrough.
    */
-  public addAudioChunk(chunk: EncodedAudioChunk): void {
-    this.muxer.addAudioChunk(chunk);
+  public addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): void {
+    this.muxer.addAudioChunk(chunk, meta);
   }
 
   /**
    * Flushes the encoder queue, finalizes the MP4 muxer, and returns the finished MP4 Blob & Object URL.
    */
   public async finalize(): Promise<{ blob: Blob; url: string; byteSize: number }> {
+    if (this.isErrored) {
+      throw new Error(`Pipeline aborted due to VideoEncoder/VideoDecoder error mid-stream (${this.lastError?.message || 'VideoEncoder error'}).`);
+    }
+
     console.log('[Encoder] Flushing VideoEncoder processing queue...');
     if (this.encoder.state === 'configured') {
       await this.encoder.flush();
+    }
+
+    if (this.isErrored) {
+      throw new Error('Pipeline aborted due to VideoEncoder/VideoDecoder error mid-stream.');
     }
 
     if (this.encodedFrameCount === 0) {
@@ -205,6 +235,10 @@ export class EncoderMuxerPipeline {
     if (this.encoder.state !== 'closed') {
       this.encoder.close();
     }
+  }
+
+  public hasError(): boolean {
+    return this.isErrored;
   }
 
   public getFrameCount(): number {

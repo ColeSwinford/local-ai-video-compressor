@@ -128,6 +128,12 @@ function extractTrackDescription(mp4file: MP4BoxFile, trackId: number): Uint8Arr
   return undefined;
 }
 
+export interface DemuxedSampleInfo {
+  cts: number;
+  duration: number;
+  timescale: number;
+}
+
 export class Demuxer {
   private mp4file: MP4BoxFile;
   private callbacks: DemuxerCallbacks;
@@ -137,6 +143,11 @@ export class Demuxer {
   private selectedVideoTrackId: number | null = null;
   private selectedAudioTrackId: number | null = null;
   private sampleCount = 0;
+  private audioTrackSize = 0;
+  private durationSec = 0;
+  private videoSamples: EncodedVideoChunk[] = [];
+  private audioSamples: EncodedAudioChunk[] = [];
+  private rawVideoSamples: DemuxedSampleInfo[] = [];
 
   constructor(callbacks: DemuxerCallbacks) {
     this.callbacks = callbacks;
@@ -161,7 +172,10 @@ export class Demuxer {
       }
 
       this.selectedVideoTrackId = videoTrack.id;
-      this.timescale = videoTrack.timescale || 1000;
+      this.timescale = videoTrack.timescale || info.timescale || 1000;
+      const trackDuration = videoTrack.duration || info.duration || 0;
+      const trackTimescale = videoTrack.timescale || info.timescale || 1;
+      this.durationSec = trackDuration / trackTimescale;
       const description = extractTrackDescription(this.mp4file, videoTrack.id);
 
       const rawWidth = videoTrack.video?.width || videoTrack.track_width || 1280;
@@ -227,11 +241,12 @@ export class Demuxer {
       this.mp4file.start();
     };
 
-    this.mp4file.onSamples = (trackId: number, _user: any, samples: MP4Sample[]) => {
-      // 1. Synchronously process Video Samples
+    this.mp4file.onSamples = async (trackId: number, _user: any, samples: MP4Sample[]) => {
+      // 1. Process Video Samples with Async Backpressure Throttling
       if (this.selectedVideoTrackId !== null && trackId === this.selectedVideoTrackId) {
-        for (const sample of samples) {
+        for (let i = 0; i < samples.length; i++) {
           if (this.isCancelled) break;
+          const sample = samples[i];
 
           this.sampleCount++;
           const isKeyframe = sample.is_sync;
@@ -241,6 +256,12 @@ export class Demuxer {
           const timestampUs = Math.round((sampleTimestamp * 1_000_000) / this.timescale);
           const durationUs = Math.round((sample.duration * 1_000_000) / this.timescale);
 
+          this.rawVideoSamples.push({
+            cts: sampleTimestamp,
+            duration: sample.duration || 0,
+            timescale: this.timescale,
+          });
+
           const chunk = new EncodedVideoChunk({
             type,
             timestamp: timestampUs,
@@ -248,7 +269,13 @@ export class Demuxer {
             data: sample.data,
           });
 
+          this.videoSamples.push(chunk);
           this.callbacks.onSample(chunk);
+
+          // Throttling: Pause demuxer extraction after every 10 video samples if decode/encode queues back up
+          if (this.sampleCount % 10 === 0 && this.callbacks.checkBackpressure) {
+            await this.callbacks.checkBackpressure();
+          }
         }
       }
 
@@ -256,6 +283,7 @@ export class Demuxer {
       if (this.selectedAudioTrackId !== null && trackId === this.selectedAudioTrackId) {
         for (const sample of samples) {
           if (this.isCancelled) break;
+          this.audioTrackSize += sample.size || sample.data?.byteLength || 0;
 
           const sampleTimestamp = sample.cts !== undefined ? sample.cts : sample.dts;
           const timestampUs = Math.round((sampleTimestamp * 1_000_000) / this.audioTimescale);
@@ -268,6 +296,7 @@ export class Demuxer {
             data: sample.data,
           });
 
+          this.audioSamples.push(audioChunk);
           if (this.callbacks.onAudioSample) {
             this.callbacks.onAudioSample(audioChunk);
           }
@@ -277,12 +306,36 @@ export class Demuxer {
   }
 
   /**
+   * Resets internal accumulators and track state before demuxing runs.
+   */
+  public reset(): void {
+    this.audioTrackSize = 0;
+    this.durationSec = 0;
+    this.videoSamples = [];
+    this.audioSamples = [];
+    this.rawVideoSamples = [];
+    this.sampleCount = 0;
+    this.selectedVideoTrackId = null;
+    this.selectedAudioTrackId = null;
+    this.isCancelled = false;
+  }
+
+  /**
    * Reads full MP4 File ArrayBuffer and appends to MP4Box.
    * Guarantees moov parsing and complete sample extraction across all container layouts (including QuickTime MOVs).
    */
   public async demuxFile(file: File): Promise<void> {
-    this.isCancelled = false;
-    this.sampleCount = 0;
+    this.reset();
+
+    // Re-create brand new MP4BoxFile instance to guarantee Pass 2 starts with zero lingering state from Pass 1
+    try {
+      this.mp4file.flush();
+      this.mp4file.stop();
+    } catch {
+      // Ignore cleanup error if already stopped
+    }
+    this.mp4file = createFile();
+    this.setupMp4boxEvents();
 
     if (this.callbacks.onProgress) {
       this.callbacks.onProgress(0, file.size);
@@ -314,6 +367,7 @@ export class Demuxer {
   public cancel(): void {
     this.isCancelled = true;
     try {
+      this.mp4file.flush();
       this.mp4file.stop();
     } catch {
       // Ignore cleanup error
@@ -322,5 +376,36 @@ export class Demuxer {
 
   public getSampleCount(): number {
     return this.sampleCount;
+  }
+
+  public getAudioTrackSize(): number {
+    return this.audioTrackSize;
+  }
+
+  public getDuration(): number {
+    return this.durationSec;
+  }
+
+  public getExactDuration(): number {
+    if (this.rawVideoSamples.length > 0) {
+      const lastSample = this.rawVideoSamples[this.rawVideoSamples.length - 1];
+      const durationFromSamples = (lastSample.cts + (lastSample.duration || 0)) / (lastSample.timescale || 1);
+      if (durationFromSamples > 0) return durationFromSamples;
+    }
+    if (this.videoSamples.length > 0) {
+      const lastSample = this.videoSamples[this.videoSamples.length - 1];
+      const durationFromSamples = (lastSample.timestamp + (lastSample.duration || 0)) / 1_000_000;
+      if (durationFromSamples > 0) return durationFromSamples;
+    }
+    if (this.durationSec > 0) return this.durationSec;
+    return 30;
+  }
+
+  public getVideoSamples(): EncodedVideoChunk[] {
+    return this.videoSamples;
+  }
+
+  public getAudioSamples(): EncodedAudioChunk[] {
+    return this.audioSamples;
   }
 }
