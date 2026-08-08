@@ -1,4 +1,4 @@
-# [WASM AI Video Compressor](https://wasm-video-compressor.coleswinford.workers.dev/)
+# [Local AI Video Compressor](https://wasm-video-compressor.coleswinford.workers.dev/)
 
 A fully client-side, hardware-accelerated webapp that compresses video to exact target file sizes using WebCodecs and WebGPU
 
