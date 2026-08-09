@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web/webgpu';
+import * as ort from 'onnxruntime-web';
 
 export interface ComplexityDetectorOptions {
   modelUrl?: string;
@@ -49,20 +49,29 @@ export class SceneComplexityDetector {
   }
 
   /**
-   * Initializes the ONNX InferenceSession using WebGPU execution provider.
+   * Initializes the ONNX InferenceSession using WebGPU with WASM fallback.
    */
   public async init(): Promise<boolean> {
     try {
-      console.log(`[Complexity] Attempting to load ONNX classification model from ${this.modelUrl} with WebGPU...`);
+      console.log(`[Complexity] Attempting to load ONNX model from ${this.modelUrl}...`);
+
+      // Point to CDN WASM binaries and limit worker threads for mobile compatibility
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/';
+      ort.env.wasm.numThreads = 1;
+
+      // Allow WebGPU if available, fallback to WASM (iOS Safari)
+      const executionProviders = ('gpu' in navigator) ? ['webgpu', 'wasm'] : ['wasm'];
+
       this.session = await ort.InferenceSession.create(this.modelUrl, {
-        executionProviders: ['webgpu'],
+        executionProviders: executionProviders,
       });
-      console.log('[Complexity] ONNX WebGPU classification session created successfully.');
+
+      console.log(`[Complexity] ONNX session initialized successfully via [${executionProviders.join(', ')}].`);
       this.isFallbackMode = false;
       return true;
     } catch (err: any) {
       console.warn(
-        `[Complexity] WebGPU session creation for ${this.modelUrl} unfulfilled (${err?.message || err}). Activating scaffold/fallback mode.`,
+        `[Complexity] Session creation for ${this.modelUrl} unfulfilled (${err?.message || err}). Activating scaffold/fallback mode.`,
       );
       this.isFallbackMode = true;
       return false;
@@ -70,21 +79,12 @@ export class SceneComplexityDetector {
   }
 
   /**
-   * Preprocessing: Uses createImageBitmap for zero-copy GPU downscaling to 224x224,
-   * draws 224x224 ImageBitmap onto OffscreenCanvas, extracts ImageData, and converts RGB into ort.Tensor [1, 3, 224, 224].
+   * Preprocessing: Draws VideoFrame directly onto 224x224 canvas (universal WebCodecs support),
+   * extracts ImageData, and converts RGB into ort.Tensor [1, 3, 224, 224].
    */
   public async preprocess224(frame: VideoFrame): Promise<{ tensor: ort.Tensor; rgba: Uint8ClampedArray }> {
-    const bitmap = await createImageBitmap(frame, {
-      resizeWidth: this.inputWidth,
-      resizeHeight: this.inputHeight,
-      resizeQuality: 'low',
-    });
-
-    try {
-      this.inputCtx.drawImage(bitmap, 0, 0);
-    } finally {
-      bitmap.close();
-    }
+    // Draw VideoFrame directly onto 2D context (prevents createImageBitmap stalls on iOS Safari)
+    this.inputCtx.drawImage(frame, 0, 0, this.inputWidth, this.inputHeight);
 
     const imageData = this.inputCtx.getImageData(0, 0, this.inputWidth, this.inputHeight);
     const rgba = imageData.data;
@@ -119,8 +119,8 @@ export class SceneComplexityDetector {
     const len = currentRgba.length;
     for (let i = 0; i < len; i += 4) {
       totalDiff += Math.abs(currentRgba[i] - previousRgba[i]) +
-                   Math.abs(currentRgba[i + 1] - previousRgba[i + 1]) +
-                   Math.abs(currentRgba[i + 2] - previousRgba[i + 2]);
+        Math.abs(currentRgba[i + 1] - previousRgba[i + 1]) +
+        Math.abs(currentRgba[i + 2] - previousRgba[i + 2]);
     }
     const numPixels = len / 4;
     return Math.min(1.0, totalDiff / (numPixels * 3 * 255));
@@ -164,7 +164,7 @@ export class SceneComplexityDetector {
         const motionScore = this.calculatePixelDeltaMAD(rgba, this.previousRgba);
         this.previousRgba = new Uint8ClampedArray(rgba);
 
-        // 3. ONNX WebGPU Inference for Spatial Score
+        // 3. ONNX Inference for Spatial Score
         let spatialScore = 0.5;
         if (this.session && !this.isFallbackMode) {
           const inputName = this.session.inputNames[0] || 'input';
@@ -193,12 +193,12 @@ export class SceneComplexityDetector {
       if (inputTensor) {
         try {
           inputTensor.dispose();
-        } catch {}
+        } catch { }
       }
       if (outputTensor) {
         try {
           outputTensor.dispose();
-        } catch {}
+        } catch { }
       }
     }
   }
