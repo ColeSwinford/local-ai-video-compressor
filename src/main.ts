@@ -488,6 +488,11 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         decodedFrameCount = frameCount;
         if (metaFrames) metaFrames.textContent = frameCount.toString();
 
+        const total = expectedVideoSamples > 0 ? expectedVideoSamples : 1;
+        const percent = Math.min(50, Math.round((frameCount / total) * 50));
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (progressPercent) progressPercent.textContent = `${percent}% (Pass 1)`;
+
         const now = performance.now();
         const elapsedSec = (now - startTime) / 1000;
         if (elapsedSec > 0 && metaFps) {
@@ -556,12 +561,6 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         ) {
           await new Promise((resolve) => setTimeout(resolve, 4));
         }
-      },
-
-      onProgress: (bytesRead: number, totalBytes: number) => {
-        const percent = Math.round((bytesRead / totalBytes) * 50); // 0% - 50% for Pass 1
-        if (progressBar) progressBar.style.width = `${percent}%`;
-        if (progressPercent) progressPercent.textContent = `${percent}% (Pass 1)`;
       },
     });
 
@@ -895,6 +894,11 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         decodedFrameCount = frameCount;
         if (metaFrames) metaFrames.textContent = frameCount.toString();
 
+        const total = expectedVideoSamples > 0 ? expectedVideoSamples : 1;
+        const percent = Math.min(100, 50 + Math.round((frameCount / total) * 50));
+        if (progressBar) progressBar.style.width = `${percent}%`;
+        if (progressPercent) progressPercent.textContent = `${percent}% (Pass 2)`;
+
         const now = performance.now();
         const elapsedSec = (now - startTime) / 1000;
         if (elapsedSec > 0 && metaFps) {
@@ -935,12 +939,6 @@ async function processFile(file: File, selectedTargetMBParam?: number) {
         ) {
           await new Promise((resolve) => setTimeout(resolve, 4));
         }
-      },
-
-      onProgress: (bytesRead: number, totalBytes: number) => {
-        const percent = 50 + Math.round((bytesRead / totalBytes) * 50); // 50% - 100% for Pass 2
-        if (progressBar) progressBar.style.width = `${percent}%`;
-        if (progressPercent) progressPercent.textContent = `${percent}% (Pass 2)`;
       },
     });
 
