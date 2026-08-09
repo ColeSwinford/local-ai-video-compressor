@@ -3,7 +3,7 @@
 ## Project Identity
 - Repository Name: `local-ai-video-compressor`
 - Target Environment: Client-side webapp (TypeScript, Vite, Cloudflare Pages/Workers)
-- Production URL: `https://local-ai-video-compressor.coleswinford.workers.dev`
+- Production URL: `https://video-compressor.coleswinford.com`
 
 ## Active Pipeline & Architecture
 - **Two-Pass Compression**: Client-side execution using WebCodecs (`VideoEncoder`/`VideoDecoder`), WebGPU/WASM ONNX scene complexity analysis, and `mp4-muxer`.
