@@ -1,0 +1,97 @@
+:root {
+  /* Dark Mode Base (macOS Dark) */
+  --bg-primary: #161618;
+  --window-bg: rgba(32, 32, 36, 0.85);
+  --titlebar-bg: rgba(255, 255, 255, 0.02);
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-border: rgba(255, 255, 255, 0.12);
+  --inspector-bg: rgba(0, 0, 0, 0.25);
+  --inspector-row-border: rgba(255, 255, 255, 0.04);
+  --logs-bg: rgba(0, 0, 0, 0.25);
+
+  --system-blue: #007AFF;
+  --system-blue-hover: #0066CC;
+  --system-green: #30D158;
+  --system-yellow: #FFD60A;
+  --system-red: #FF453A;
+
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.40);
+
+  --option-bg: #2C2C2E;
+  --option-text: #FFFFFF;
+  
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: -apple-system, BlinkMacSystemFont, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* macOS Light Mode Neutrals */
+    --bg-primary: #F5F5F7;
+    --window-bg: rgba(255, 255, 255, 0.85);
+    --titlebar-bg: rgba(0, 0, 0, 0.03);
+    --card-bg: rgba(255, 255, 255, 0.70);
+    --border-color: rgba(0, 0, 0, 0.1);
+    --input-bg: rgba(0, 0, 0, 0.05);
+    --input-border: rgba(0, 0, 0, 0.12);
+    --inspector-bg: rgba(0, 0, 0, 0.03);
+    --inspector-row-border: rgba(0, 0, 0, 0.05);
+    --logs-bg: rgba(0, 0, 0, 0.04);
+
+    --text-primary: #1C1C1E;
+    --text-secondary: rgba(60, 60, 67, 0.75);
+    --text-muted: rgba(60, 60, 67, 0.45);
+
+    --option-bg: #FFFFFF;
+    --option-text: #1C1C1E;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-system);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* App Footer Credits */
+.app-footer {
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.45));
+  margin-top: 24px;
+  padding-bottom: 16px;
+}
+
+.app-footer a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.app-footer a:hover {
+  color: var(--accent-color, #007AFF);
+  text-decoration: none;
+}
