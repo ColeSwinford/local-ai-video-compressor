@@ -189,6 +189,36 @@ body {
   50% { opacity: 0.4; }
 }
 
+@media (max-width: 520px) {
+  .window-header,
+  .window-titlebar {
+    padding: 8px 10px;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  /* Hide static center title on mobile to free up header space */
+  .window-title {
+    display: none !important;
+  }
+
+  /* Constrain status badge and force text truncation on completion messages */
+  .status-badge {
+    max-width: 100%;
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+  }
+
+  .status-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 180px;
+  }
+}
+
 /* Main Split-Pane Body */
 .window-body {
   display: grid;
