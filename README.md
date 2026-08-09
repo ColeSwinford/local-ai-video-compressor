@@ -1,8 +1,8 @@
-# [Local AI Video Compressor](https://local-ai-video-compressor.coleswinford.workers.dev/)
+# [Local AI Video Compressor](https://video-compressor.coleswinford.com/)
 
 A privacy-first, fully client-side web application that compresses videos to exact target file sizes. Built with **TypeScript**, **WebCodecs**, and **WebAssembly**, it eliminates the need for server-side processing by utilizing edge-deployed machine learning and local hardware acceleration.
 
-[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen.svg)](https://local-ai-video-compressor.coleswinford.workers.dev/)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen.svg)](https://video-compressor.coleswinford.com/)
 [![Tech Stack](https://img.shields.io/badge/Stack-TypeScript%20%7C%20Vite%20%7C%20WebCodecs-blue.svg)]()
 
 ## 🧠 The Problem & Solution
