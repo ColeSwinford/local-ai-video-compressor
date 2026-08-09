@@ -1195,6 +1195,43 @@ function initApp() {
     });
   }
 
+  // Info Modal Event Listeners
+  const infoBtn = document.getElementById('info-btn') as HTMLButtonElement;
+  const infoModal = document.getElementById('info-modal') as HTMLDivElement;
+  const closeInfoBtn = document.getElementById('close-info-btn') as HTMLButtonElement;
+
+  const closeModal = () => {
+    if (infoModal) {
+      infoModal.classList.add('hidden');
+      infoModal.setAttribute('aria-hidden', 'true');
+    }
+  };
+
+  if (infoBtn && infoModal) {
+    infoBtn.addEventListener('click', () => {
+      infoModal.classList.remove('hidden');
+      infoModal.setAttribute('aria-hidden', 'false');
+    });
+  }
+
+  if (closeInfoBtn) {
+    closeInfoBtn.addEventListener('click', closeModal);
+  }
+
+  if (infoModal) {
+    infoModal.addEventListener('click', (e) => {
+      if (e.target === infoModal) {
+        closeModal();
+      }
+    });
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && infoModal && !infoModal.classList.contains('hidden')) {
+      closeModal();
+    }
+  });
+
   logMessage('[System] Application initialized. Waiting for MP4 file input.', 'info');
 }
 

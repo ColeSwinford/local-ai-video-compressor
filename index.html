@@ -39,9 +39,19 @@
         </span>
       </div>
       <div class="window-title">Video Compressor</div>
-      <div class="status-badge" id="status-badge">
-        <span class="status-dot"></span>
-        <span id="status-text">Ready</span>
+      <div class="header-right">
+        <div class="status-badge" id="status-badge">
+          <span class="status-dot"></span>
+          <span id="status-text">Ready</span>
+        </div>
+        <button id="info-btn" class="icon-btn info-btn" title="How It Works" aria-label="How It Works">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -239,6 +249,22 @@
     Designed and built by <a href="https://github.com/ColeSwinford/wasm-video-compressor" target="_blank"
       rel="noopener noreferrer"><strong>Cole Swinford</strong></a>
   </footer>
+
+  <div id="info-modal" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>How It Works</h3>
+        <button id="close-info-btn" class="icon-btn" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <ul>
+          <li><strong>100% Private & Client-Side:</strong> Video processing runs entirely inside your browser. No files are ever uploaded to an external server.</li>
+          <li><strong>Pass 1 (AI Scene Analysis):</strong> An ONNX computer vision model running via WebAssembly analyzes frame complexity to identify visually detailed segments.</li>
+          <li><strong>Pass 2 (Hardware Compression):</strong> WebCodecs hardware acceleration dynamically allocates target bitrates to maximize visual quality within your exact size target.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
