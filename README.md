@@ -5,6 +5,10 @@ A privacy-first, fully client-side web application that compresses videos to exa
 [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen.svg)](https://video-compressor.coleswinford.com/)
 [![Tech Stack](https://img.shields.io/badge/Stack-TypeScript%20%7C%20Vite%20%7C%20WebCodecs-blue.svg)]()
 
+<p align="center">
+  <img src="docs/assets/video-compressor.png" alt="Local AI Video Compressor Interface" width="100%" />
+</p>
+
 ## 🧠 The Problem & Solution
 
 **The Problem:** Traditional web-based video compressors rely on uploading files to a remote server. This introduces massive latency, incurs high cloud compute costs, and compromises user privacy. 
