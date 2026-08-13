@@ -25,4 +25,4 @@ Most web video tools require uploading source files to a backend server, consumi
 
 - **Core APIs & Runtimes:** WebCodecs API, ONNX Runtime Web, WebAssembly (WASM), WebGPU
 - **Languages & Tooling:** TypeScript, Vite, `mp4box.js`
-- **Hosting:** Cloudflare Pages
+
