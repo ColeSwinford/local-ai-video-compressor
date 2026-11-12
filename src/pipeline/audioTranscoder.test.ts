@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { downmixChannelsToStereo, mapToWebCodecsAudioCodec } from './audioTranscoder';
+import {
+  downmixChannelsToStereo,
+  mapToWebCodecsAudioCodec,
+  resamplePlanarChannels,
+} from './audioTranscoder';
 import { buildAacAudioSpecificConfig } from './demuxer';
 
 describe('mapToWebCodecsAudioCodec', () => {
@@ -50,5 +54,31 @@ describe('buildAacAudioSpecificConfig', () => {
     expect(Array.from(buildAacAudioSpecificConfig(48000, 2))).toEqual([0x11, 0x90]);
     // 44.1kHz (idx 4), 1ch, AAC-LC (2) -> 0x12, 0x08
     expect(Array.from(buildAacAudioSpecificConfig(44100, 1))).toEqual([0x12, 0x08]);
+  });
+});
+
+describe('resamplePlanarChannels', () => {
+  it('returns input unchanged when sample rates match', () => {
+    const input = new Float32Array([0.1, 0.2, -0.1, -0.2]);
+    const res = resamplePlanarChannels(input, 2, 2, 48000, 48000);
+    expect(res.numberOfFrames).toBe(2);
+    expect(res.data).toBe(input);
+  });
+
+  it('resamples 44.1kHz stereo planar audio to 48kHz', () => {
+    const srcFrames = 441;
+    const input = new Float32Array(srcFrames * 2);
+    for (let i = 0; i < srcFrames; i++) {
+      input[i] = i / srcFrames;
+      input[srcFrames + i] = -(i / srcFrames);
+    }
+
+    const res = resamplePlanarChannels(input, 2, srcFrames, 44100, 48000);
+    expect(res.numberOfFrames).toBe(480);
+    expect(res.data.length).toBe(960);
+    expect(res.data[0]).toBeCloseTo(0, 5);
+    expect(res.data[479]).toBeCloseTo((srcFrames - 1) / srcFrames, 2);
+    expect(res.data[480]).toBeCloseTo(0, 5);
+    expect(res.data[959]).toBeCloseTo(-((srcFrames - 1) / srcFrames), 2);
   });
 });

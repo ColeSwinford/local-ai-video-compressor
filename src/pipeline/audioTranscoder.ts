@@ -55,6 +55,44 @@ export function downmixChannelsToStereo(channels: Float32Array[], numberOfFrames
   return out;
 }
 
+/**
+ * Resamples planar Float32 audio channels from srcSampleRate to dstSampleRate using linear interpolation.
+ */
+export function resamplePlanarChannels(
+  planarData: Float32Array,
+  numberOfChannels: number,
+  srcFrames: number,
+  srcSampleRate: number,
+  dstSampleRate: number,
+): { data: Float32Array; numberOfFrames: number } {
+  if (srcSampleRate === dstSampleRate || srcFrames === 0) {
+    return { data: planarData, numberOfFrames: srcFrames };
+  }
+
+  const dstFrames = Math.max(1, Math.round((srcFrames * dstSampleRate) / srcSampleRate));
+  const out = new Float32Array(dstFrames * numberOfChannels);
+  const step = srcSampleRate / dstSampleRate;
+
+  for (let c = 0; c < numberOfChannels; c++) {
+    const srcOffset = c * srcFrames;
+    const dstOffset = c * dstFrames;
+    for (let i = 0; i < dstFrames; i++) {
+      const pos = i * step;
+      const idx = Math.floor(pos);
+      if (idx >= srcFrames - 1) {
+        out[dstOffset + i] = planarData[srcOffset + srcFrames - 1];
+      } else {
+        const frac = pos - idx;
+        const s0 = planarData[srcOffset + idx];
+        const s1 = planarData[srcOffset + idx + 1];
+        out[dstOffset + i] = s0 + (s1 - s0) * frac;
+      }
+    }
+  }
+
+  return { data: out, numberOfFrames: dstFrames };
+}
+
 export interface AudioTranscoderSourceConfig {
   codec: string;
   numberOfChannels: number;
@@ -171,12 +209,18 @@ export class AudioTranscoder {
     });
     this.encoder.configure(encoderConfig);
 
+    const targetSampleRate = encoderConfig.sampleRate;
+
     this.decoder = new AudioDecoder({
       output: (audioData: AudioData) => {
         try {
           if (this.isErrored || !this.encoder || this.encoder.state !== 'configured') return;
 
-          if (audioData.numberOfChannels === targetChannels && audioData.format === 'f32-planar') {
+          if (
+            audioData.numberOfChannels === targetChannels &&
+            audioData.sampleRate === targetSampleRate &&
+            audioData.format === 'f32-planar'
+          ) {
             this.encoder.encode(audioData);
             return;
           }
@@ -190,15 +234,22 @@ export class AudioTranscoder {
             channels.push(plane);
           }
 
-          const outData =
+          const downmixed =
             targetChannels === 1 ? channels[0] : downmixChannelsToStereo(channels, numFrames);
+          const resampled = resamplePlanarChannels(
+            downmixed,
+            targetChannels,
+            numFrames,
+            audioData.sampleRate,
+            targetSampleRate,
+          );
           const outAudioData = new AudioData({
             format: 'f32-planar',
-            sampleRate: audioData.sampleRate,
-            numberOfFrames: numFrames,
+            sampleRate: targetSampleRate,
+            numberOfFrames: resampled.numberOfFrames,
             numberOfChannels: targetChannels,
             timestamp: audioData.timestamp,
-            data: outData as BufferSource,
+            data: resampled.data as BufferSource,
           });
           try {
             this.encoder.encode(outAudioData);
