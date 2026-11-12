@@ -15,6 +15,21 @@ export function selectH264CodecString(width: number, height: number, framerate: 
   return 'avc1.640034'; // High Profile, Level 5.2 (up to 4K60+)
 }
 
+/**
+ * Determines whether VideoEncoder bitrate should be reconfigured at a segment/keyframe boundary.
+ * Requires >= 8% bitrate delta and >= 15 frames since the last reconfiguration to avoid driver stalls.
+ */
+export function shouldReconfigureBitrate(
+  currentBitrate: number,
+  newBitrate: number,
+  isKeyframeBoundary: boolean,
+  framesSinceLastReconfig: number,
+): boolean {
+  if (!isKeyframeBoundary || currentBitrate <= 0 || newBitrate <= 0) return false;
+  if (framesSinceLastReconfig < 15) return false;
+  return Math.abs(newBitrate - currentBitrate) / currentBitrate >= 0.08;
+}
+
 export interface EncoderMuxerAudioConfig {
   codec: 'aac' | 'opus';
   numberOfChannels: number;
@@ -158,10 +173,30 @@ export class EncoderMuxerPipeline {
   }
 
   /**
-   * Mid-stream re-configuration is disabled to allow hardware VBR rate controller to manage smooth frame distribution.
+   * Reconfigures VideoEncoder target bitrate at segment/keyframe boundaries when the delta is >= 8%.
    */
-  public reconfigureBitrate(_newBitrate: number): boolean {
-    return false;
+  public reconfigureBitrate(newBitrate: number, isKeyframeBoundary = false): boolean {
+    if (this.isErrored || this.encoder.state !== 'configured') {
+      return false;
+    }
+
+    const roundedBitrate = Math.round(newBitrate);
+    if (!shouldReconfigureBitrate(this.currentBitrate, roundedBitrate, isKeyframeBoundary, this.framesSinceLastReconfig)) {
+      return false;
+    }
+
+    try {
+      this.encoder.configure({
+        ...this.baseConfig,
+        bitrate: roundedBitrate,
+      });
+      this.currentBitrate = roundedBitrate;
+      this.framesSinceLastReconfig = 0;
+      return true;
+    } catch (err) {
+      console.warn('[Encoder] Segment-boundary bitrate reconfigure skipped:', err);
+      return false;
+    }
   }
 
   public getCurrentBitrate(): number {

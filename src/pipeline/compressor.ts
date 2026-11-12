@@ -443,6 +443,9 @@ export class CompressorPipeline {
 
             // Encode processed VideoFrame synchronously into WebCodecs VideoEncoder & mp4-muxer
             if (this.encoderPipeline) {
+              if (isKeyframe && entry?.targetBitrate) {
+                this.encoderPipeline.reconfigureBitrate(entry.targetBitrate, true);
+              }
               this.encoderPipeline.encodeFrame(processedFrame, isKeyframe);
             }
           } finally {

@@ -1,5 +1,27 @@
 import * as ort from 'onnxruntime-web';
 
+const IMAGENET_MEAN = [0.485, 0.456, 0.406] as const;
+const IMAGENET_STD = [0.229, 0.224, 0.225] as const;
+
+/**
+ * Converts packed RGBA pixel bytes into NCHW Float32 tensor data normalized with ImageNet mean/std.
+ */
+export function rgbaToImageNetTensorData(rgba: Uint8ClampedArray, numPixels: number): Float32Array {
+  const tensorData = new Float32Array(3 * numPixels);
+  const rOffset = 0;
+  const gOffset = numPixels;
+  const bOffset = 2 * numPixels;
+
+  for (let i = 0; i < numPixels; i++) {
+    const px = i * 4;
+    tensorData[rOffset + i] = (rgba[px] / 255.0 - IMAGENET_MEAN[0]) / IMAGENET_STD[0];
+    tensorData[gOffset + i] = (rgba[px + 1] / 255.0 - IMAGENET_MEAN[1]) / IMAGENET_STD[1];
+    tensorData[bOffset + i] = (rgba[px + 2] / 255.0 - IMAGENET_MEAN[2]) / IMAGENET_STD[2];
+  }
+
+  return tensorData;
+}
+
 export interface ComplexityDetectorOptions {
   modelUrl?: string;
   inputWidth?: number;
@@ -90,17 +112,7 @@ export class SceneComplexityDetector {
     const rgba = imageData.data;
 
     const numPixels = this.inputWidth * this.inputHeight; // 224 * 224 = 50,176
-    const tensorData = new Float32Array(3 * numPixels); // 150,528 floats
-
-    const rOffset = 0;
-    const gOffset = numPixels;
-    const bOffset = 2 * numPixels;
-
-    for (let i = 0; i < numPixels; i++) {
-      tensorData[rOffset + i] = rgba[i * 4] / 255.0;
-      tensorData[gOffset + i] = rgba[i * 4 + 1] / 255.0;
-      tensorData[bOffset + i] = rgba[i * 4 + 2] / 255.0;
-    }
+    const tensorData = rgbaToImageNetTensorData(rgba, numPixels);
 
     return {
       tensor: new ort.Tensor('float32', tensorData, [1, 3, this.inputHeight, this.inputWidth]),
