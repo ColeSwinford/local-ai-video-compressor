@@ -4,24 +4,11 @@ import { SceneComplexityDetector } from './complexity';
 import { EncoderMuxerPipeline, type EncoderMuxerAudioConfig } from './encoder';
 import { calculateTargetDimensions } from '../utils/dimensions';
 import { getTrueDuration } from '../utils/formatters';
+import { allocateBitrates, findClosestComplexityEntry } from './allocator';
+import { evaluatePreflightWarnings, isSupportedContainerFile } from './audio';
 import type { ComplexityEntry, CompressionOptions, CompressionResult } from '../types';
 
-/**
- * Query pre-calculated targetBitrate from complexityMap matching the frame timestamp.
- */
-function findClosestComplexityEntry(complexityMap: ComplexityEntry[], timestamp: number): ComplexityEntry | undefined {
-  if (complexityMap.length === 0) return undefined;
-  let closest = complexityMap[0];
-  let minDiff = Math.abs(timestamp - closest.timestamp);
-  for (let i = 1; i < complexityMap.length; i++) {
-    const diff = Math.abs(timestamp - complexityMap[i].timestamp);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = complexityMap[i];
-    }
-  }
-  return closest;
-}
+declare const __ONNX_MODEL_URL__: string | undefined;
 
 export class CompressorPipeline {
   private complexityDetector: SceneComplexityDetector;
@@ -31,8 +18,9 @@ export class CompressorPipeline {
   private isCancelled = false;
 
   constructor() {
+    const modelUrl = typeof __ONNX_MODEL_URL__ !== 'undefined' ? __ONNX_MODEL_URL__ : '/model.onnx';
     this.complexityDetector = new SceneComplexityDetector({
-      modelUrl: '/model.onnx',
+      modelUrl,
       inputWidth: 224,
       inputHeight: 224,
       inferenceStride: 15,
@@ -89,6 +77,15 @@ export class CompressorPipeline {
 
     const downloadFilename = `compressed_ai_2pass_${file.name.replace(/\.[^/.]+$/, '')}.mp4`;
 
+    const containerCheck = isSupportedContainerFile(file.name);
+    if (!containerCheck.supported) {
+      const extLabel = containerCheck.extension ? `.${containerCheck.extension}` : 'unknown';
+      const errMsg = `Unsupported container (${extLabel}). Only MP4, MOV, and M4V containers are currently supported.`;
+      log(errMsg, 'error');
+      setStatus('error', 'Unsupported Format');
+      throw new Error(errMsg);
+    }
+
     if (onProgress) onProgress(0, 'Pass 1: AI Scene Analysis...');
 
     let targetIntervalUs = 0;
@@ -144,24 +141,24 @@ export class CompressorPipeline {
       this.currentDecoder = new DecoderWrapper(canvas, {
         onFrame: async (originalFrame: VideoFrame, frameIndex: number) => {
           try {
-            // A. Resize 2D Canvas if resolution changed
+            // Draw every surviving frame to hdrCanvas so VideoFrame(hdrCanvas) encodes the actual frame
             if (hdrCanvas.width !== currentTargetWidth || hdrCanvas.height !== currentTargetHeight) {
               hdrCanvas.width = currentTargetWidth;
               hdrCanvas.height = currentTargetHeight;
             }
-
-            // B. Draw VideoFrame onto 2D Canvas (Standard sRGB native rendering)
             hdrCtx.drawImage(originalFrame, 0, 0, currentTargetWidth, currentTargetHeight);
 
-            // Render visual preview on UI canvas
-            if (canvas.width !== currentTargetWidth || canvas.height !== currentTargetHeight) {
-              canvas.width = currentTargetWidth;
-              canvas.height = currentTargetHeight;
-            }
-            canvasCtx.drawImage(hdrCanvas, 0, 0, currentTargetWidth, currentTargetHeight);
+            // Throttle UI preview canvas copy in Pass 2 (every 5th frame) to reduce DOM canvas overhead
+            if (frameIndex === 1 || frameIndex % 5 === 0) {
+              if (canvas.width !== currentTargetWidth || canvas.height !== currentTargetHeight) {
+                canvas.width = currentTargetWidth;
+                canvas.height = currentTargetHeight;
+              }
+              canvasCtx.drawImage(hdrCanvas, 0, 0, currentTargetWidth, currentTargetHeight);
 
-            if (frameIndex === 1 && canvasPlaceholder) {
-              canvasPlaceholder.style.display = 'none';
+              if (frameIndex === 1 && canvasPlaceholder) {
+                canvasPlaceholder.style.display = 'none';
+              }
             }
 
             // PASS 1: Run ONNX Scene Complexity Estimation every 15 frames
@@ -237,13 +234,14 @@ export class CompressorPipeline {
             this.currentDecoder.configure(info.codec, info.width, info.height, info.description);
           }
 
-          if (info.audioInfo) {
-            const isOpus = info.audioInfo.codec.toLowerCase().includes('opus');
+          if (info.audioInfo && info.audioInfo.isMuxerSupported && info.audioInfo.muxerCodec) {
             audioConfig = {
-              codec: isOpus ? 'opus' : 'aac',
+              codec: info.audioInfo.muxerCodec,
               numberOfChannels: info.audioInfo.numberOfChannels,
               sampleRate: info.audioInfo.sampleRate,
             };
+          } else {
+            audioConfig = undefined;
           }
         },
 
@@ -308,159 +306,43 @@ export class CompressorPipeline {
         }
       }
 
-      const targetBytes = targetMB * 1024 * 1024;
-      const containerOverhead = targetBytes * 0.015;
+      const allocation = allocateBitrates({
+        complexityMap,
+        targetMB,
+        audioBytes,
+        trueDuration,
+        targetIntervalUs,
+        maxKeyframeDistance,
+      });
 
-      const netVideoBytes = Math.max(targetBytes * 0.25, (targetBytes - audioBytes - containerOverhead) * 0.92);
-      const targetVideoBitrate = Math.floor((netVideoBytes * 8) / trueDuration);
-      const avgBitrateBps = targetVideoBitrate;
-      const targetVideoBits = targetVideoBitrate * trueDuration;
+      complexityMap = allocation.complexityMap;
+      const { targetVideoBitrate, avgBitrateBps, segmentCount, keyframeCount } = allocation;
+      const avgKbps = Math.round(avgBitrateBps / 1000);
+
+      const readyInfo = lastReadyInfo as DemuxerReadyInfo;
+      const preflightWarnings = evaluatePreflightWarnings({
+        fileSizeBytes: file.size,
+        targetMB,
+        durationSec: trueDuration,
+        totalAudioTracks: readyInfo.totalAudioTracks,
+        selectedAudio: readyInfo.audioInfo
+          ? {
+              codec: readyInfo.audioInfo.codec,
+              isMuxerSupported: readyInfo.audioInfo.isMuxerSupported,
+              numberOfChannels: readyInfo.audioInfo.numberOfChannels,
+              estimatedAudioBytes: audioBytes,
+            }
+          : undefined,
+        targetVideoBitrate,
+      });
+
+      for (const warning of preflightWarnings) {
+        log(`[Preflight] ${warning.message}`, warning.level);
+      }
 
       log(`[Bit Allocator] Measured Duration: ${trueDuration.toFixed(2)}s | Audio Size: ${(audioBytes/1024/1024).toFixed(2)}MB | Target Video Bitrate: ${Math.round(targetVideoBitrate/1000)} kbps`);
-
-      // 2. Filter complexityMap to include ONLY frames that survive FPS decimation in Pass 2
-      let survivingMap: ComplexityEntry[] = [];
-      if (targetIntervalUs > 0) {
-        let lastSurvivingUs = -1;
-        for (const entry of complexityMap) {
-          if (lastSurvivingUs < 0 || (entry.timestamp - lastSurvivingUs) >= (targetIntervalUs - 2000)) {
-            survivingMap.push(entry);
-            lastSurvivingUs = entry.timestamp;
-          }
-        }
-      } else {
-        survivingMap = [...complexityMap];
-      }
-
-      // Use survivingMap as the authoritative active complexity map for GOP segmenting & bit allocation
-      complexityMap = survivingMap;
-
-      // 3. Group surviving complexityMap entries into 30-frame / 1-second / scene-cut bounded GOP segments
-      interface SegmentInfo {
-        startIndex: number;
-        endIndex: number;
-        avgScore: number;
-        targetBitrate: number;
-      }
-
-      const segments: SegmentInfo[] = [];
-      let currentSegmentStart = 0;
-      let currentSegmentSum = 0;
-      let currentSegmentCount = 0;
-
-      for (let i = 0; i < complexityMap.length; i++) {
-        const entry = complexityMap[i];
-        const prevEntry = i > 0 ? complexityMap[i - 1] : null;
-
-        const isComplexityJump = prevEntry !== null && prevEntry.score > 0 && (entry.score > prevEntry.score * 1.40);
-        const framesInCurrentSegment = i - currentSegmentStart;
-        const timeInCurrentSegmentSec = (entry.timestamp - complexityMap[currentSegmentStart].timestamp) / 1_000_000;
-
-        const shouldCutSegment = (i > 0) && (isComplexityJump || framesInCurrentSegment >= 30 || timeInCurrentSegmentSec >= 1.0);
-
-        if (shouldCutSegment) {
-          const segmentAvgScore = currentSegmentCount > 0 ? currentSegmentSum / currentSegmentCount : 0.5;
-          segments.push({
-            startIndex: currentSegmentStart,
-            endIndex: i - 1,
-            avgScore: segmentAvgScore,
-            targetBitrate: 0,
-          });
-
-          currentSegmentStart = i;
-          currentSegmentSum = 0;
-          currentSegmentCount = 0;
-        }
-
-        currentSegmentSum += entry.score;
-        currentSegmentCount++;
-      }
-
-      if (currentSegmentCount > 0) {
-        const segmentAvgScore = currentSegmentSum / currentSegmentCount;
-        segments.push({
-          startIndex: currentSegmentStart,
-          endIndex: complexityMap.length - 1,
-          avgScore: segmentAvgScore,
-          targetBitrate: 0,
-        });
-      }
-
-      // 4. Gentle Power-Curve Bit Allocator (exponent 1.2) across segments
-      let minSegmentScore = Infinity;
-      let maxSegmentScore = -Infinity;
-      for (const seg of segments) {
-        if (seg.avgScore < minSegmentScore) minSegmentScore = seg.avgScore;
-        if (seg.avgScore > maxSegmentScore) maxSegmentScore = seg.avgScore;
-      }
-
-      const scoreRange = maxSegmentScore > minSegmentScore ? maxSegmentScore - minSegmentScore : 1.0;
-      const powerWeights = new Float64Array(segments.length);
-      let totalPowerWeightSum = 0;
-
-      for (let i = 0; i < segments.length; i++) {
-        const normalizedScore = Math.max(0.01, Math.min(1.0, (segments[i].avgScore - minSegmentScore) / scoreRange));
-        const weightedWeight = Math.pow(normalizedScore, 1.2); // Gentle 1.2 power curve
-        powerWeights[i] = weightedWeight;
-        totalPowerWeightSum += weightedWeight;
-      }
-
-      // Bitrate floor = 55% of avg bitrate (to stop hardware rate controller from over-dropping QP on static scenes), Bitrate cap = 2.2x avg bitrate
-      const bitrateFloor = Math.max(100_000, Math.floor(avgBitrateBps * 0.55));
-      const bitrateCap = Math.floor(avgBitrateBps * 2.2);
-
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const weight = totalPowerWeightSum > 0 ? powerWeights[i] / totalPowerWeightSum : 1 / segments.length;
-        const segmentBudgetBits = targetVideoBits * weight;
-
-        const segStartUs = complexityMap[seg.startIndex].timestamp;
-        const nextSegStartUs = (i < segments.length - 1) ? complexityMap[segments[i + 1].startIndex].timestamp : (segStartUs + 1_000_000);
-        let segmentDurationSec = (nextSegStartUs - segStartUs) / 1_000_000;
-        if (segmentDurationSec <= 0) segmentDurationSec = 1.0;
-
-        let calculatedBitrate = Math.floor(segmentBudgetBits / segmentDurationSec);
-        calculatedBitrate = Math.min(bitrateCap, Math.max(bitrateFloor, calculatedBitrate));
-        seg.targetBitrate = calculatedBitrate;
-      }
-
-      // 5. Asymmetric EMA Bitrate Smoothing across segments (Fast Attack alpha=0.85, Slow Decay alpha=0.15)
-      let smoothedBitrate = segments[0]?.targetBitrate || Math.round(avgBitrateBps);
-      for (let i = 0; i < segments.length; i++) {
-        const rawBitrate = segments[i].targetBitrate || smoothedBitrate;
-        const alpha = rawBitrate > smoothedBitrate ? 0.85 : 0.15;
-        smoothedBitrate = alpha * rawBitrate + (1 - alpha) * smoothedBitrate;
-        segments[i].targetBitrate = Math.round(smoothedBitrate);
-      }
-
-      // 6. Map Segment Bitrates and Dynamic Keyframe Boundaries into surviving complexityMap
-      let lastKeyframeTimestamp = complexityMap[0]?.timestamp || 0;
-      let lastKeyframeIndex = 0;
-
-      for (let sIdx = 0; sIdx < segments.length; sIdx++) {
-        const seg = segments[sIdx];
-        for (let idx = seg.startIndex; idx <= seg.endIndex; idx++) {
-          complexityMap[idx].targetBitrate = seg.targetBitrate;
-
-          const isComplexityJump = (sIdx > 0 && idx === seg.startIndex && segments[sIdx].avgScore > segments[sIdx - 1].avgScore * 1.40);
-          const timeDiffSec = (complexityMap[idx].timestamp - lastKeyframeTimestamp) / 1_000_000;
-          const frameDiff = idx - lastKeyframeIndex;
-          const isIntervalExceeded = timeDiffSec >= 2.0 || frameDiff >= maxKeyframeDistance;
-
-          if (idx === 0 || isComplexityJump || isIntervalExceeded) {
-            complexityMap[idx].isKeyframe = true;
-            lastKeyframeTimestamp = complexityMap[idx].timestamp;
-            lastKeyframeIndex = idx;
-          } else {
-            complexityMap[idx].isKeyframe = false;
-          }
-        }
-      }
-
-      const keyframeCount = complexityMap.filter((e) => e.isKeyframe).length;
-      const avgKbps = Math.round(avgBitrateBps / 1000);
       log(
-        `[AI Bit Allocator & GOP Segmenter] Target size: ${targetMB} MB (${(trueDuration || 1).toFixed(1)}s). Avg VBR: ${avgKbps} kbps (High Profile, 55%-220% Range, ${segments.length} Segments, ${currentTargetWidth}x${currentTargetHeight}, Active FPS: ${activeFps}, Max Keyframe Dist: ${maxKeyframeDistance}). Identified ${keyframeCount} keyframes across ${complexityMap.length} surviving frames.`,
+        `[AI Bit Allocator & GOP Segmenter] Target size: ${targetMB} MB (${(trueDuration || 1).toFixed(1)}s). Avg VBR: ${avgKbps} kbps (High Profile, 55%-220% Range, ${segmentCount} Segments, ${currentTargetWidth}x${currentTargetHeight}, Active FPS: ${activeFps}, Max Keyframe Dist: ${maxKeyframeDistance}). Identified ${keyframeCount} keyframes across ${complexityMap.length} surviving frames.`,
         'info',
       );
 
@@ -473,12 +355,6 @@ export class CompressorPipeline {
       log('[Pass 2 / 2] Starting AI-Guided Encoding Pass...', 'info');
       setStatus('working', 'Pass 2: Encoding MP4...');
       if (onProgress) onProgress(50, 'Pass 2: Encoding MP4...');
-
-      // Close Pass 1 Decoder to construct a dedicated strictly-synchronous Pass 2 Decoder instance
-      if (this.currentDecoder) {
-        this.currentDecoder.close();
-        this.currentDecoder = null;
-      }
 
       this.complexityDetector.resetFrameCounter();
 
@@ -519,24 +395,24 @@ export class CompressorPipeline {
             const previousTimestampUs = lastEncodedTimestampUs;
             lastEncodedTimestampUs = originalFrame.timestamp;
 
-            // A. Resize 2D Canvas if resolution changed
+            // Draw every surviving frame to hdrCanvas so VideoFrame(hdrCanvas) encodes the actual frame
             if (hdrCanvas.width !== currentTargetWidth || hdrCanvas.height !== currentTargetHeight) {
               hdrCanvas.width = currentTargetWidth;
               hdrCanvas.height = currentTargetHeight;
             }
-
-            // B. Draw VideoFrame onto 2D Canvas (Standard sRGB native rendering)
             hdrCtx.drawImage(originalFrame, 0, 0, currentTargetWidth, currentTargetHeight);
 
-            // Render visual preview on UI canvas
-            if (canvas.width !== currentTargetWidth || canvas.height !== currentTargetHeight) {
-              canvas.width = currentTargetWidth;
-              canvas.height = currentTargetHeight;
-            }
-            canvasCtx.drawImage(hdrCanvas, 0, 0, currentTargetWidth, currentTargetHeight);
+            // Throttle UI preview canvas copy in Pass 2 (every 5th frame) to reduce DOM canvas overhead
+            if (frameIndex === 1 || frameIndex % 5 === 0) {
+              if (canvas.width !== currentTargetWidth || canvas.height !== currentTargetHeight) {
+                canvas.width = currentTargetWidth;
+                canvas.height = currentTargetHeight;
+              }
+              canvasCtx.drawImage(hdrCanvas, 0, 0, currentTargetWidth, currentTargetHeight);
 
-            if (frameIndex === 1 && canvasPlaceholder) {
-              canvasPlaceholder.style.display = 'none';
+              if (frameIndex === 1 && canvasPlaceholder) {
+                canvasPlaceholder.style.display = 'none';
+              }
             }
 
             // Compute frame duration matching the new decimated frame interval for hardware rate controller
@@ -619,7 +495,9 @@ export class CompressorPipeline {
 
         onAudioSample: (chunk: EncodedAudioChunk) => {
           // Pass-through raw EncodedAudioChunk directly into MP4 Muxer during Pass 2
-          this.encoderPipeline?.addAudioChunk(chunk);
+          if (audioConfig) {
+            this.encoderPipeline?.addAudioChunk(chunk);
+          }
         },
 
         checkBackpressure: async () => {
@@ -645,6 +523,7 @@ export class CompressorPipeline {
       }
 
       const hasPipelineError = (this.currentDecoder?.hasError() || false) || (this.encoderPipeline?.hasError() || false);
+      const encoderErrMsg = this.encoderPipeline?.getLastError()?.message;
 
       // Explicitly teardown Pass 2 Decoder and Demuxer instances before finalization
       if (this.currentDecoder) {
@@ -658,7 +537,8 @@ export class CompressorPipeline {
 
       // Check for mid-stream pipeline errors before finalizing MP4 structure
       if (hasPipelineError) {
-        throw new Error('Pipeline aborted due to VideoEncoder/VideoDecoder error mid-stream.');
+        const detail = encoderErrMsg ? ` (${encoderErrMsg})` : '';
+        throw new Error(`Pipeline aborted due to VideoEncoder/VideoDecoder error mid-stream${detail}.`);
       }
 
       let exportResult = { blob: new Blob(), url: '', byteSize: 0 };

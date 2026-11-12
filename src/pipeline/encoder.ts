@@ -1,5 +1,20 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
+/**
+ * Selects an H.264 High Profile codec string with an AVC level that supports the target resolution and framerate.
+ * Level 4.2 (avc1.64002a) maxes out at 1080p; 4K requires Level 5.1 (avc1.640033) or 5.2 (avc1.640034).
+ */
+export function selectH264CodecString(width: number, height: number, framerate: number): string {
+  const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  if (macroblocks <= 8704 && framerate <= 60) {
+    return 'avc1.64002a'; // High Profile, Level 4.2 (up to 1080p60)
+  }
+  if (macroblocks <= 36864 && framerate <= 30) {
+    return 'avc1.640033'; // High Profile, Level 5.1 (up to 4K30)
+  }
+  return 'avc1.640034'; // High Profile, Level 5.2 (up to 4K60+)
+}
+
 export interface EncoderMuxerAudioConfig {
   codec: 'aac' | 'opus';
   numberOfChannels: number;
@@ -37,7 +52,7 @@ export class EncoderMuxerPipeline {
     this.height = config.height;
     this.currentBitrate = config.bitrate || 2_000_000; // Default 2 Mbps
     this.framerate = config.framerate || 30;
-    this.codec = 'avc1.64002a'; // H.264 High Profile, Level 4.2
+    this.codec = selectH264CodecString(this.width, this.height, this.framerate);
     this.description = config.description;
 
     if (typeof VideoEncoder === 'undefined') {
@@ -239,6 +254,10 @@ export class EncoderMuxerPipeline {
 
   public hasError(): boolean {
     return this.isErrored;
+  }
+
+  public getLastError(): DOMException | Error | null {
+    return this.lastError;
   }
 
   public getFrameCount(): number {

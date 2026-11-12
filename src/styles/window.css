@@ -11,6 +11,32 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transition: max-width 0.22s ease, border-radius 0.22s ease;
+}
+
+.macos-window.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+}
+
+.macos-window.is-fullscreen .window-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.macos-window.is-minimized {
+  max-width: 420px;
+}
+
+.macos-window.is-minimized .window-body {
+  display: none;
 }
 
 /* Window Titlebar */

@@ -8,13 +8,20 @@ This project implements a privacy-first, client-side video compression pipeline 
 ## Directory & Module Mapping
 
 ```
+public/
+└── model/
+    └── mobilenetv2-12.onnx   # Bundled MobileNetV2 ONNX model (auto-resolved by Vite)
+
 src/
-├── main.ts                   # Entry point & DOM event wiring
+├── main.ts                   # Entry point, stoplight controls, & DOM event wiring
 ├── style.css                 # CSS manifest importing styles/*.css
 ├── pipeline/
-│   ├── compressor.ts         # High-level two-pass pipeline orchestration
+│   ├── allocator.ts          # Pure two-pass VBR bit allocation & GOP segmentation
+│   ├── audio.ts              # Container validation, audio track selection, & preflight
 │   ├── complexity.ts         # Pass 1 ONNX scene analysis & score map
-│   ├── demuxer.ts            # MP4 box demuxing & chunk reading
+│   ├── compressor.ts         # High-level two-pass pipeline orchestration
+│   ├── decoder.ts            # WebCodecs VideoDecoder wrapper & queue management
+│   ├── demuxer.ts            # MP4Box 4 MB chunked streaming demuxer
 │   └── encoder.ts            # Pass 2 WebCodecs VideoEncoder & MP4 muxing
 ├── ui/
 │   ├── modal.ts              # Modal overlay state & keyboard handlers
@@ -26,7 +33,7 @@ src/
 │   └── index.ts              # Shared TypeScript interfaces & configuration state
 └── styles/
     ├── base.css              # Theme variables, resets, & typography
-    ├── window.css            # Desktop window chrome & header status
+    ├── window.css            # Desktop window chrome, fullscreen/minimize, & status
     ├── dropzone.css          # Drag-and-drop target & canvas preview
     └── modal.css             # Info modal cards & backdrop overlays
 ```

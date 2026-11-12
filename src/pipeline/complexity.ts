@@ -56,7 +56,7 @@ export class SceneComplexityDetector {
       console.log(`[Complexity] Attempting to load ONNX model from ${this.modelUrl}...`);
 
       // Point to CDN WASM binaries and limit worker threads for mobile compatibility
-      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/';
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
       ort.env.wasm.numThreads = 1;
 
       // Allow WebGPU if available, fallback to WASM (iOS Safari)

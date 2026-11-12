@@ -1,5 +1,5 @@
 import './style.css';
-import { CompressorPipeline } from './pipeline/compressor';
+import type { CompressorPipeline } from './pipeline/compressor';
 import { initModal } from './ui/modal';
 import { setStatus, updateProgress, logMessage } from './ui/progress';
 import { triggerDownload } from './utils/formatters';
@@ -228,6 +228,7 @@ async function processFile(file: File) {
     activePipeline = null;
   }
 
+  const { CompressorPipeline } = await import('./pipeline/compressor');
   activePipeline = new CompressorPipeline();
 
   const targetMB = parseFloat(targetSizeNumber?.value || targetSizeRange?.value || '10') || 10;
@@ -448,6 +449,40 @@ function initApp() {
       try {
         window.close();
       } catch {}
+    });
+  }
+
+  // Window Minimize Button Handler (Yellow dot -> compact floating titlebar / live status HUD)
+  const appWindow = document.getElementById('app') as HTMLDivElement | null;
+  const minimizeBtn = document.getElementById('minimize-btn') as HTMLSpanElement | null;
+  const maximizeBtn = document.getElementById('maximize-btn') as HTMLSpanElement | null;
+
+  if (minimizeBtn && appWindow) {
+    minimizeBtn.addEventListener('click', () => {
+      const isMinimized = appWindow.classList.toggle('is-minimized');
+      minimizeBtn.title = isMinimized ? 'Restore Window' : 'Minimize to Status Bar';
+    });
+  }
+
+  // Window Maximize Button Handler (Green dot -> browser fullscreen toggle)
+  if (maximizeBtn && appWindow) {
+    maximizeBtn.addEventListener('click', async () => {
+      appWindow.classList.remove('is-minimized');
+      try {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen();
+        } else {
+          await document.exitFullscreen();
+        }
+      } catch (err) {
+        log(`[System] Fullscreen unavailable: ${(err as Error)?.message || err}`, 'warn');
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const isFull = Boolean(document.fullscreenElement);
+      appWindow.classList.toggle('is-fullscreen', isFull);
+      maximizeBtn.title = isFull ? 'Exit Fullscreen' : 'Enter Fullscreen';
     });
   }
 

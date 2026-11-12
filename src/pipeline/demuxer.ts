@@ -1,4 +1,5 @@
 import { createFile, DataStream, type MP4BoxFile } from 'mp4box';
+import { selectBestAudioTrack, type MuxerAudioCodec } from './audio';
 
 export interface MP4MediaTrack {
   id: number;
@@ -68,9 +69,12 @@ export interface MP4Sample {
 export interface DemuxerAudioInfo {
   trackId: number;
   codec: string;
+  muxerCodec: MuxerAudioCodec | null;
+  isMuxerSupported: boolean;
   numberOfChannels: number;
   sampleRate: number;
   timescale: number;
+  bitrate: number;
 }
 
 export interface DemuxerReadyInfo {
@@ -84,6 +88,7 @@ export interface DemuxerReadyInfo {
   duration: number;
   timescale: number;
   nbSamples: number;
+  totalAudioTracks: number;
   description?: Uint8Array;
   audioInfo?: DemuxerAudioInfo;
 }
@@ -145,9 +150,9 @@ export class Demuxer {
   private sampleCount = 0;
   private audioTrackSize = 0;
   private durationSec = 0;
-  private videoSamples: EncodedVideoChunk[] = [];
-  private audioSamples: EncodedAudioChunk[] = [];
-  private rawVideoSamples: DemuxedSampleInfo[] = [];
+  private lastVideoSample: DemuxedSampleInfo | null = null;
+  private lastVideoChunkTimestampUs = 0;
+  private lastVideoChunkDurationUs = 0;
 
   constructor(callbacks: DemuxerCallbacks) {
     this.callbacks = callbacks;
@@ -196,18 +201,28 @@ export class Demuxer {
       if (targetWidth < 2) targetWidth = 2;
       if (targetHeight < 2) targetHeight = 2;
 
-      // Locate optional audio track for passthrough
+      // Locate best audio track for passthrough (prefers AAC/Opus and stereo over surround)
+      const audioTracks =
+        info.audioTracks.length > 0
+          ? info.audioTracks
+          : (info.tracks.filter((t: MP4MediaTrack) => (t as any).type === 'audio') as any[]);
+      const bestAudio = selectBestAudioTrack(audioTracks);
+
       let audioInfo: DemuxerAudioInfo | undefined = undefined;
-      const audioTrack = info.audioTracks[0] || info.tracks.find((t: MP4MediaTrack) => (t as any).type === 'audio');
-      if (audioTrack) {
-        this.selectedAudioTrackId = audioTrack.id;
-        this.audioTimescale = audioTrack.timescale || 44100;
+      if (bestAudio) {
+        this.audioTimescale = bestAudio.track.timescale || 44100;
+        if (bestAudio.isMuxerSupported) {
+          this.selectedAudioTrackId = bestAudio.track.id;
+        }
         audioInfo = {
-          trackId: audioTrack.id,
-          codec: audioTrack.codec,
-          numberOfChannels: audioTrack.audio?.channel_count || (audioTrack as any).channel_count || 2,
-          sampleRate: audioTrack.audio?.sample_rate || (audioTrack as any).sample_rate || 44100,
+          trackId: bestAudio.track.id,
+          codec: bestAudio.track.codec,
+          muxerCodec: bestAudio.muxerCodec,
+          isMuxerSupported: bestAudio.isMuxerSupported,
+          numberOfChannels: bestAudio.numberOfChannels,
+          sampleRate: bestAudio.sampleRate,
           timescale: this.audioTimescale,
+          bitrate: bestAudio.bitrate,
         };
       }
 
@@ -222,6 +237,7 @@ export class Demuxer {
         duration: videoTrack.duration,
         timescale: this.timescale,
         nbSamples: videoTrack.nb_samples,
+        totalAudioTracks: audioTracks.length,
         description,
         audioInfo,
       };
@@ -256,11 +272,13 @@ export class Demuxer {
           const timestampUs = Math.round((sampleTimestamp * 1_000_000) / this.timescale);
           const durationUs = Math.round((sample.duration * 1_000_000) / this.timescale);
 
-          this.rawVideoSamples.push({
+          this.lastVideoSample = {
             cts: sampleTimestamp,
             duration: sample.duration || 0,
             timescale: this.timescale,
-          });
+          };
+          this.lastVideoChunkTimestampUs = timestampUs;
+          this.lastVideoChunkDurationUs = durationUs;
 
           const chunk = new EncodedVideoChunk({
             type,
@@ -269,7 +287,6 @@ export class Demuxer {
             data: sample.data,
           });
 
-          this.videoSamples.push(chunk);
           this.callbacks.onSample(chunk);
 
           // Throttling: Pause demuxer extraction after every 10 video samples if decode/encode queues back up
@@ -296,7 +313,6 @@ export class Demuxer {
             data: sample.data,
           });
 
-          this.audioSamples.push(audioChunk);
           if (this.callbacks.onAudioSample) {
             this.callbacks.onAudioSample(audioChunk);
           }
@@ -311,9 +327,9 @@ export class Demuxer {
   public reset(): void {
     this.audioTrackSize = 0;
     this.durationSec = 0;
-    this.videoSamples = [];
-    this.audioSamples = [];
-    this.rawVideoSamples = [];
+    this.lastVideoSample = null;
+    this.lastVideoChunkTimestampUs = 0;
+    this.lastVideoChunkDurationUs = 0;
     this.sampleCount = 0;
     this.selectedVideoTrackId = null;
     this.selectedAudioTrackId = null;
@@ -321,8 +337,8 @@ export class Demuxer {
   }
 
   /**
-   * Reads full MP4 File ArrayBuffer and appends to MP4Box.
-   * Guarantees moov parsing and complete sample extraction across all container layouts (including QuickTime MOVs).
+   * Streams the MP4 File in 4 MB chunks via file.slice() and appends to MP4Box.
+   * Handles both fast-start (moov at start) and non-faststart (moov at end) containers without loading the entire file into RAM.
    */
   public async demuxFile(file: File): Promise<void> {
     this.reset();
@@ -341,21 +357,53 @@ export class Demuxer {
       this.callbacks.onProgress(0, file.size);
     }
 
-    console.log(`[Demuxer] Reading full file buffer (${file.size} bytes)...`);
-    const buffer = await file.arrayBuffer();
-    if (this.isCancelled) return;
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
+    let offset = 0;
+    let bytesRead = 0;
+    let backwardJumps = 0;
+    const maxBackwardJumps = 8;
 
-    (buffer as any).fileStart = 0;
+    console.log(`[Demuxer] Streaming file in 4 MB chunks (${file.size} bytes)...`);
 
-    if (this.callbacks.onProgress) {
-      this.callbacks.onProgress(file.size, file.size);
+    while (offset < file.size && !this.isCancelled) {
+      const end = Math.min(offset + CHUNK_SIZE, file.size);
+      const buffer = await file.slice(offset, end).arrayBuffer();
+      if (this.isCancelled) return;
+
+      (buffer as ArrayBuffer & { fileStart: number }).fileStart = offset;
+      bytesRead = Math.min(file.size, bytesRead + buffer.byteLength);
+
+      const nextOffset = this.mp4file.appendBuffer(buffer as ArrayBuffer & { fileStart: number });
+
+      if (this.callbacks.onProgress) {
+        this.callbacks.onProgress(bytesRead, file.size);
+      }
+
+      if (this.callbacks.checkBackpressure) {
+        await this.callbacks.checkBackpressure();
+      }
+
+      if (typeof nextOffset === 'number' && nextOffset >= 0 && nextOffset < file.size) {
+        if (nextOffset < offset) {
+          backwardJumps++;
+          if (backwardJumps > maxBackwardJumps) {
+            offset = end;
+          } else {
+            offset = nextOffset;
+          }
+        } else if (nextOffset === offset) {
+          // Guard against stalled offset
+          offset = end;
+        } else {
+          offset = nextOffset;
+        }
+      } else {
+        offset = end;
+      }
     }
 
-    console.log(`[Demuxer] Appending full buffer (${buffer.byteLength} bytes) to MP4Box...`);
-    this.mp4file.appendBuffer(buffer as any);
-
     if (!this.isCancelled) {
-      console.log(`[Demuxer] File buffer appended. Total video samples emitted so far: ${this.sampleCount}. Flushing MP4Box...`);
+      console.log(`[Demuxer] File streaming complete. Total video samples emitted so far: ${this.sampleCount}. Flushing MP4Box...`);
       this.mp4file.flush();
       console.log(`[Demuxer] MP4Box flush complete. Total video samples emitted: ${this.sampleCount}.`);
       if (this.callbacks.onComplete) {
@@ -387,25 +435,16 @@ export class Demuxer {
   }
 
   public getExactDuration(): number {
-    if (this.rawVideoSamples.length > 0) {
-      const lastSample = this.rawVideoSamples[this.rawVideoSamples.length - 1];
-      const durationFromSamples = (lastSample.cts + (lastSample.duration || 0)) / (lastSample.timescale || 1);
+    if (this.lastVideoSample) {
+      const durationFromSamples =
+        (this.lastVideoSample.cts + (this.lastVideoSample.duration || 0)) / (this.lastVideoSample.timescale || 1);
       if (durationFromSamples > 0) return durationFromSamples;
     }
-    if (this.videoSamples.length > 0) {
-      const lastSample = this.videoSamples[this.videoSamples.length - 1];
-      const durationFromSamples = (lastSample.timestamp + (lastSample.duration || 0)) / 1_000_000;
+    if (this.lastVideoChunkTimestampUs > 0 || this.lastVideoChunkDurationUs > 0) {
+      const durationFromSamples = (this.lastVideoChunkTimestampUs + this.lastVideoChunkDurationUs) / 1_000_000;
       if (durationFromSamples > 0) return durationFromSamples;
     }
     if (this.durationSec > 0) return this.durationSec;
     return 30;
-  }
-
-  public getVideoSamples(): EncodedVideoChunk[] {
-    return this.videoSamples;
-  }
-
-  public getAudioSamples(): EncodedAudioChunk[] {
-    return this.audioSamples;
   }
 }
