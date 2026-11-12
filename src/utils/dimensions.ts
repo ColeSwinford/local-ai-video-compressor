@@ -11,6 +11,8 @@ export function calculateTargetDimensions(
   if (mode === '1080') maxLongEdge = 1920;
   else if (mode === '720') maxLongEdge = 1280;
   else if (mode === '480') maxLongEdge = 854;
+  else if (mode === '360') maxLongEdge = 640;
+  else if (mode === '240') maxLongEdge = 426;
 
   const currentLongEdge = Math.max(srcWidth, srcHeight);
   if (mode === 'auto' || currentLongEdge <= maxLongEdge) {

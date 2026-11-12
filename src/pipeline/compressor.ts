@@ -1,4 +1,5 @@
 import { Demuxer, type DemuxerReadyInfo } from './demuxer';
+import type { MkvDemuxer } from './mkvDemuxer';
 import { DecoderWrapper } from './decoder';
 import { SceneComplexityDetector } from './complexity';
 import { EncoderMuxerPipeline, type EncoderMuxerAudioConfig } from './encoder';
@@ -6,13 +7,14 @@ import { calculateTargetDimensions } from '../utils/dimensions';
 import { getTrueDuration } from '../utils/formatters';
 import { allocateBitrates, findClosestComplexityEntry } from './allocator';
 import { evaluatePreflightWarnings, isSupportedContainerFile } from './audio';
+import { AudioTranscoder } from './audioTranscoder';
 import type { ComplexityEntry, CompressionOptions, CompressionResult } from '../types';
 
 declare const __ONNX_MODEL_URL__: string | undefined;
 
 export class CompressorPipeline {
   private complexityDetector: SceneComplexityDetector;
-  private currentDemuxer: Demuxer | null = null;
+  private currentDemuxer: Demuxer | MkvDemuxer | null = null;
   private currentDecoder: DecoderWrapper | null = null;
   private encoderPipeline: EncoderMuxerPipeline | null = null;
   private isCancelled = false;
@@ -57,6 +59,7 @@ export class CompressorPipeline {
       targetMB,
       resMode,
       selectedFps,
+      audioMode = 'passthrough',
       canvas,
       canvasCtx,
       canvasPlaceholder,
@@ -80,10 +83,16 @@ export class CompressorPipeline {
     const containerCheck = isSupportedContainerFile(file.name);
     if (!containerCheck.supported) {
       const extLabel = containerCheck.extension ? `.${containerCheck.extension}` : 'unknown';
-      const errMsg = `Unsupported container (${extLabel}). Only MP4, MOV, and M4V containers are currently supported.`;
+      const errMsg = `Unsupported container (${extLabel}). Supported formats: MP4, MOV, M4V, MKV, and WebM.`;
       log(errMsg, 'error');
       setStatus('error', 'Unsupported Format');
       throw new Error(errMsg);
+    }
+
+    const DemuxerClass =
+      containerCheck.kind === 'mkv' ? (await import('./mkvDemuxer')).MkvDemuxer : Demuxer;
+    if (containerCheck.kind === 'mkv') {
+      log(`[Demuxer] Loaded streaming MKV/WebM demuxer for .${containerCheck.extension} container.`, 'info');
     }
 
     if (onProgress) onProgress(0, 'Pass 1: AI Scene Analysis...');
@@ -197,7 +206,7 @@ export class CompressorPipeline {
       });
 
       // Demuxer Setup for Pass 1
-      this.currentDemuxer = new Demuxer({
+      this.currentDemuxer = new DemuxerClass({
         onReady: (info: DemuxerReadyInfo) => {
           lastReadyInfo = info;
           expectedVideoSamples = info.nbSamples;
@@ -234,11 +243,12 @@ export class CompressorPipeline {
             this.currentDecoder.configure(info.codec, info.width, info.height, info.description);
           }
 
-          if (info.audioInfo && info.audioInfo.isMuxerSupported && info.audioInfo.muxerCodec) {
+          if (audioMode === 'passthrough' && info.audioInfo && info.audioInfo.isMuxerSupported && info.audioInfo.muxerCodec) {
             audioConfig = {
               codec: info.audioInfo.muxerCodec,
               numberOfChannels: info.audioInfo.numberOfChannels,
               sampleRate: info.audioInfo.sampleRate,
+              description: info.audioInfo.description,
             };
           } else {
             audioConfig = undefined;
@@ -267,8 +277,7 @@ export class CompressorPipeline {
 
       // Await absolute true duration via headless extraction
       const trueDuration = await getTrueDuration(file, this.currentDemuxer.getExactDuration());
-      // Fallback to 16,000 bytes/sec if async audio parsing is lagging behind Pass 1
-      const audioBytes = this.currentDemuxer.getAudioTrackSize() || Math.floor(trueDuration * 16000);
+      const demuxedAudioTrackSize = this.currentDemuxer.getAudioTrackSize();
 
       // Explicitly teardown Pass 1 Decoder and Demuxer instances
       if (this.currentDecoder) {
@@ -287,6 +296,58 @@ export class CompressorPipeline {
       // =========================================================================
       if (!lastReadyInfo) {
         throw new Error('Pass 1 analysis failed to parse track metadata.');
+      }
+
+      const readyInfo = lastReadyInfo as DemuxerReadyInfo;
+      let audioTranscoder: AudioTranscoder | null = null;
+      const isCompressAudio =
+        audioMode === 'compress-opus-64' ||
+        audioMode === 'compress-opus-48' ||
+        audioMode === 'compress-aac-128';
+
+      let audioBytes = 0;
+      if (audioMode === 'mute' || !readyInfo.audioInfo) {
+        audioBytes = 0;
+      } else if (isCompressAudio) {
+        const targetAudioBps =
+          audioMode === 'compress-opus-48' ? 48_000 : audioMode === 'compress-opus-64' ? 64_000 : 128_000;
+        const preferredCodec = audioMode === 'compress-aac-128' ? 'aac' : 'opus';
+        const transcoder = new AudioTranscoder();
+        const initRes = await transcoder.init(
+          readyInfo.audioInfo,
+          targetAudioBps,
+          (chunk, meta) => {
+            this.encoderPipeline?.addAudioChunk(chunk, meta);
+          },
+          (errMsg) => {
+            log(`[Audio Transcoder] ${errMsg}`, 'warn');
+          },
+          preferredCodec,
+        );
+        if (initRes.supported && initRes.outputCodec) {
+          const outChannels = initRes.outputChannels || 2;
+          const actualBps = initRes.actualBitrate || targetAudioBps;
+          audioTranscoder = transcoder;
+          audioConfig = {
+            codec: initRes.outputCodec,
+            numberOfChannels: outChannels,
+            sampleRate: initRes.outputCodec === 'opus' ? 48000 : readyInfo.audioInfo.sampleRate || 48000,
+          };
+          audioBytes = Math.floor((actualBps / 8) * trueDuration);
+          log(
+            `[Audio Transcoder] Compressing ${readyInfo.audioInfo.numberOfChannels}ch (${readyInfo.audioInfo.codec}) → ${outChannels}ch ${initRes.outputCodec.toUpperCase()} @ ${Math.round(actualBps / 1000)} kbps.`,
+            'info',
+          );
+        } else {
+          transcoder.close();
+          audioConfig = undefined;
+          audioBytes = 0;
+          log(`[Audio Transcoder] ${initRes.reason} Exporting video-only.`, 'warn');
+        }
+      } else if (readyInfo.audioInfo.isMuxerSupported) {
+        audioBytes = demuxedAudioTrackSize || Math.floor(trueDuration * 16000);
+      } else {
+        audioBytes = 0;
       }
 
       if (complexityMap.length === 0) {
@@ -319,7 +380,6 @@ export class CompressorPipeline {
       const { targetVideoBitrate, avgBitrateBps, segmentCount, keyframeCount } = allocation;
       const avgKbps = Math.round(avgBitrateBps / 1000);
 
-      const readyInfo = lastReadyInfo as DemuxerReadyInfo;
       const preflightWarnings = evaluatePreflightWarnings({
         fileSizeBytes: file.size,
         targetMB,
@@ -485,7 +545,7 @@ export class CompressorPipeline {
       this.currentDemuxer = null;
 
       // Re-initialize Demuxer for Pass 2
-      this.currentDemuxer = new Demuxer({
+      this.currentDemuxer = new DemuxerClass({
         onReady: (info: DemuxerReadyInfo) => {
           if (this.currentDecoder) {
             this.currentDecoder.configure(info.codec, info.width, info.height, info.description);
@@ -497,8 +557,9 @@ export class CompressorPipeline {
         },
 
         onAudioSample: (chunk: EncodedAudioChunk) => {
-          // Pass-through raw EncodedAudioChunk directly into MP4 Muxer during Pass 2
-          if (audioConfig) {
+          if (audioTranscoder) {
+            audioTranscoder.decode(chunk);
+          } else if (audioConfig) {
             this.encoderPipeline?.addAudioChunk(chunk);
           }
         },
@@ -523,6 +584,12 @@ export class CompressorPipeline {
 
       if (this.currentDecoder) {
         await this.currentDecoder.flush();
+      }
+      if (audioTranscoder) {
+        await audioTranscoder.flush();
+        log(`[Audio Transcoder] Encoded ${audioTranscoder.getEncodedChunkCount()} AAC audio chunks.`, 'info');
+        audioTranscoder.close();
+        audioTranscoder = null;
       }
 
       const hasPipelineError = (this.currentDecoder?.hasError() || false) || (this.encoderPipeline?.hasError() || false);

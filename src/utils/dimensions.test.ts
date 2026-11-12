@@ -18,9 +18,11 @@ describe('calculateTargetDimensions', () => {
     expect(calculateTargetDimensions(2160, 3840, '1080')).toEqual({ width: 1080, height: 1920 });
   });
 
-  it('downscales 1080p to 720p and 480p with even dimensions', () => {
+  it('downscales 1080p to 720p, 480p, 360p, and 240p with even dimensions', () => {
     expect(calculateTargetDimensions(1920, 1080, '720')).toEqual({ width: 1280, height: 720 });
     expect(calculateTargetDimensions(1920, 1080, '480')).toEqual({ width: 854, height: 480 });
+    expect(calculateTargetDimensions(1920, 1080, '360')).toEqual({ width: 640, height: 360 });
+    expect(calculateTargetDimensions(1920, 1080, '240')).toEqual({ width: 426, height: 240 });
   });
 
   it('does not upscale smaller inputs when a larger cap is selected', () => {

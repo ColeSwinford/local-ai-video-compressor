@@ -75,6 +75,7 @@ export interface DemuxerAudioInfo {
   sampleRate: number;
   timescale: number;
   bitrate: number;
+  description?: Uint8Array;
 }
 
 export interface DemuxerReadyInfo {
@@ -101,6 +102,60 @@ export interface DemuxerCallbacks {
   checkBackpressure?: () => Promise<void>;
   onError?: (error: Error | string) => void;
   onComplete?: () => void;
+}
+
+const AAC_SAMPLE_RATES = [
+  96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+];
+
+/**
+ * Builds a 2-byte ISO 14496-3 AudioSpecificConfig for AAC-LC as a fallback when esds parsing is unavailable.
+ */
+export function buildAacAudioSpecificConfig(sampleRate: number, channels: number): Uint8Array {
+  const freqIdx = AAC_SAMPLE_RATES.indexOf(sampleRate);
+  const safeFreqIdx = freqIdx >= 0 ? freqIdx : 3; // Default 48000 Hz
+  const safeChannels = Math.max(1, Math.min(7, channels || 2));
+  const audioObjectType = 2; // AAC-LC
+  const byte0 = (audioObjectType << 3) | (safeFreqIdx >> 1);
+  const byte1 = ((safeFreqIdx & 1) << 7) | (safeChannels << 3);
+  return new Uint8Array([byte0, byte1]);
+}
+
+/**
+ * Extracts raw AudioSpecificConfig (DecoderSpecificInfo) from an mp4box.js audio track's esds box.
+ */
+function extractAudioDescription(
+  mp4file: MP4BoxFile,
+  trackId: number,
+  codec: string,
+  sampleRate: number,
+  channels: number,
+): Uint8Array | undefined {
+  try {
+    const track = mp4file.getTrackById(trackId);
+    const entry = track?.mdia?.minf?.stbl?.stsd?.entries?.[0];
+    if (entry?.esds?.esd?.descs) {
+      for (const d1 of entry.esds.esd.descs) {
+        if (d1?.descs) {
+          for (const d2 of d1.descs) {
+            if (d2?.data instanceof Uint8Array && d2.data.byteLength > 0) {
+              return new Uint8Array(d2.data);
+            }
+          }
+        }
+        if (d1?.data instanceof Uint8Array && d1.data.byteLength > 0) {
+          return new Uint8Array(d1.data);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Demuxer] Could not extract audio esds description:', err);
+  }
+
+  if (codec.toLowerCase().startsWith('mp4a')) {
+    return buildAacAudioSpecificConfig(sampleRate, channels);
+  }
+  return undefined;
 }
 
 /**
@@ -211,9 +266,14 @@ export class Demuxer {
       let audioInfo: DemuxerAudioInfo | undefined = undefined;
       if (bestAudio) {
         this.audioTimescale = bestAudio.track.timescale || 44100;
-        if (bestAudio.isMuxerSupported) {
-          this.selectedAudioTrackId = bestAudio.track.id;
-        }
+        this.selectedAudioTrackId = bestAudio.track.id;
+        const audioDesc = extractAudioDescription(
+          this.mp4file,
+          bestAudio.track.id,
+          bestAudio.track.codec,
+          bestAudio.sampleRate,
+          bestAudio.numberOfChannels,
+        );
         audioInfo = {
           trackId: bestAudio.track.id,
           codec: bestAudio.track.codec,
@@ -223,6 +283,7 @@ export class Demuxer {
           sampleRate: bestAudio.sampleRate,
           timescale: this.audioTimescale,
           bitrate: bestAudio.bitrate,
+          description: audioDesc,
         };
       }
 

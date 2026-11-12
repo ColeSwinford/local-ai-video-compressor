@@ -31,16 +31,30 @@ export interface PreflightParams {
 }
 
 const SUPPORTED_MP4_EXTENSIONS = new Set(['mp4', 'mov', 'm4v']);
+const SUPPORTED_MKV_EXTENSIONS = new Set(['mkv', 'webm']);
+
+export type ContainerKind = 'mp4' | 'mkv';
 
 /**
- * Checks whether the input filename has an ISO Base Media container extension supported by MP4Box.
+ * Checks whether the input filename has a supported container extension (MP4/MOV/M4V or MKV/WebM).
  */
-export function isSupportedContainerFile(filename: string): { supported: boolean; extension: string } {
+export function isSupportedContainerFile(filename: string): {
+  supported: boolean;
+  extension: string;
+  kind: ContainerKind | null;
+} {
   const parts = filename.trim().toLowerCase().split('.');
   const extension = parts.length > 1 ? parts[parts.length - 1] : '';
+  if (SUPPORTED_MP4_EXTENSIONS.has(extension)) {
+    return { supported: true, extension, kind: 'mp4' };
+  }
+  if (SUPPORTED_MKV_EXTENSIONS.has(extension)) {
+    return { supported: true, extension, kind: 'mkv' };
+  }
   return {
-    supported: SUPPORTED_MP4_EXTENSIONS.has(extension),
+    supported: false,
     extension,
+    kind: null,
   };
 }
 

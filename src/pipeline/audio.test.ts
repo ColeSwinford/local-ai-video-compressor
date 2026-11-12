@@ -28,15 +28,23 @@ function makeAudioTrack(id: number, codec: string, channelCount: number, sampleR
 
 describe('isSupportedContainerFile', () => {
   it('accepts mp4, mov, and m4v case-insensitively', () => {
-    expect(isSupportedContainerFile('clip.mp4')).toEqual({ supported: true, extension: 'mp4' });
-    expect(isSupportedContainerFile('movie.MOV')).toEqual({ supported: true, extension: 'mov' });
-    expect(isSupportedContainerFile('show.m4v')).toEqual({ supported: true, extension: 'm4v' });
+    expect(isSupportedContainerFile('clip.mp4')).toEqual({ supported: true, extension: 'mp4', kind: 'mp4' });
+    expect(isSupportedContainerFile('movie.MOV')).toEqual({ supported: true, extension: 'mov', kind: 'mp4' });
+    expect(isSupportedContainerFile('show.m4v')).toEqual({ supported: true, extension: 'm4v', kind: 'mp4' });
   });
 
-  it('rejects mkv and other unsupported containers', () => {
-    expect(isSupportedContainerFile('Succession.S04E10.mkv')).toEqual({ supported: false, extension: 'mkv' });
-    expect(isSupportedContainerFile('video.webm')).toEqual({ supported: false, extension: 'webm' });
-    expect(isSupportedContainerFile('noext')).toEqual({ supported: false, extension: '' });
+  it('accepts mkv and webm containers', () => {
+    expect(isSupportedContainerFile('Succession.S04E10.mkv')).toEqual({
+      supported: true,
+      extension: 'mkv',
+      kind: 'mkv',
+    });
+    expect(isSupportedContainerFile('video.webm')).toEqual({ supported: true, extension: 'webm', kind: 'mkv' });
+  });
+
+  it('rejects unsupported containers', () => {
+    expect(isSupportedContainerFile('legacy.avi')).toEqual({ supported: false, extension: 'avi', kind: null });
+    expect(isSupportedContainerFile('noext')).toEqual({ supported: false, extension: '', kind: null });
   });
 });
 

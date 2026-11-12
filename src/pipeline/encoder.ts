@@ -1,4 +1,5 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { buildAacAudioSpecificConfig } from './demuxer';
 
 /**
  * Selects an H.264 High Profile codec string with an AVC level that supports the target resolution and framerate.
@@ -34,6 +35,7 @@ export interface EncoderMuxerAudioConfig {
   codec: 'aac' | 'opus';
   numberOfChannels: number;
   sampleRate: number;
+  description?: Uint8Array;
 }
 
 export interface EncoderMuxerConfig {
@@ -50,6 +52,8 @@ export class EncoderMuxerPipeline {
   private encoder: VideoEncoder;
   private encodedFrameCount = 0;
   private hasSetDecoderConfig = false;
+  private hasSetAudioDecoderConfig = false;
+  private audioConfig?: EncoderMuxerAudioConfig;
   private width: number;
   private height: number;
   private currentBitrate: number;
@@ -69,6 +73,7 @@ export class EncoderMuxerPipeline {
     this.framerate = config.framerate || 30;
     this.codec = selectH264CodecString(this.width, this.height, this.framerate);
     this.description = config.description;
+    this.audioConfig = config.audio;
 
     if (typeof VideoEncoder === 'undefined') {
       throw new Error('WebCodecs VideoEncoder API is not supported in this browser environment.');
@@ -243,7 +248,49 @@ export class EncoderMuxerPipeline {
    * Passes an EncodedAudioChunk directly into MP4 Muxer for audio passthrough.
    */
   public addAudioChunk(chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata): void {
-    this.muxer.addAudioChunk(chunk, meta);
+    let finalMeta = meta;
+    if (!this.hasSetAudioDecoderConfig) {
+      if (this.audioConfig) {
+        const existingDesc = finalMeta?.decoderConfig?.description;
+        const hasDesc =
+          existingDesc instanceof ArrayBuffer
+            ? existingDesc.byteLength > 0
+            : ArrayBuffer.isView(existingDesc) && existingDesc.byteLength > 0;
+
+        if (!finalMeta?.decoderConfig) {
+          finalMeta = {
+            ...meta,
+            decoderConfig: {
+              codec: this.audioConfig.codec === 'opus' ? 'opus' : 'mp4a.40.2',
+              numberOfChannels: this.audioConfig.numberOfChannels,
+              sampleRate: this.audioConfig.sampleRate,
+              description:
+                this.audioConfig.description && this.audioConfig.description.byteLength > 0
+                  ? this.audioConfig.description
+                  : this.audioConfig.codec === 'aac'
+                    ? buildAacAudioSpecificConfig(this.audioConfig.sampleRate, this.audioConfig.numberOfChannels)
+                    : undefined,
+            },
+          };
+        } else if (!hasDesc && this.audioConfig.codec === 'aac') {
+          finalMeta = {
+            ...meta,
+            decoderConfig: {
+              ...finalMeta.decoderConfig,
+              description:
+                this.audioConfig.description && this.audioConfig.description.byteLength > 0
+                  ? this.audioConfig.description
+                  : buildAacAudioSpecificConfig(
+                      finalMeta.decoderConfig.sampleRate || this.audioConfig.sampleRate,
+                      finalMeta.decoderConfig.numberOfChannels || this.audioConfig.numberOfChannels,
+                    ),
+            },
+          };
+        }
+      }
+      this.hasSetAudioDecoderConfig = true;
+    }
+    this.muxer.addAudioChunk(chunk, finalMeta);
   }
 
   /**

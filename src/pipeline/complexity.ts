@@ -157,12 +157,20 @@ export class SceneComplexityDetector {
    * Evaluates frame complexity combining spatial score and temporal motion score:
    * unifiedScore = spatialScore + (motionScore * 1.5)
    */
+  private isInferencing = false;
+
   public async processFrame(frame: VideoFrame): Promise<ComplexityProcessResult> {
     let inputTensor: ort.Tensor | null = null;
     let outputTensor: ort.Tensor | null = null;
 
-    const shouldRunInference = this.frameCounter % this.inferenceStride === 0 || this.frameCounter === 0;
+    const shouldRunInference =
+      (this.frameCounter % this.inferenceStride === 0 || this.frameCounter === 0) &&
+      !this.isInferencing;
     this.frameCounter++;
+
+    if (shouldRunInference) {
+      this.isInferencing = true;
+    }
 
     try {
       if (shouldRunInference) {
@@ -202,6 +210,9 @@ export class SceneComplexityDetector {
         isSkipped: !shouldRunInference,
       };
     } finally {
+      if (shouldRunInference) {
+        this.isInferencing = false;
+      }
       if (inputTensor) {
         try {
           inputTensor.dispose();

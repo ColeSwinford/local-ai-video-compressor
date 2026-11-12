@@ -7,12 +7,14 @@ export interface ComplexityEntry {
 
 export type StatusState = 'ready' | 'working' | 'complete' | 'error';
 export type LogType = 'info' | 'success' | 'warn' | 'error';
+export type AudioMode = 'passthrough' | 'compress-opus-64' | 'compress-opus-48' | 'compress-aac-128' | 'mute';
 
 export interface CompressionOptions {
   file: File;
   targetMB: number;
   resMode: string;
   selectedFps: string;
+  audioMode?: AudioMode;
   canvas: HTMLCanvasElement;
   canvasCtx: CanvasRenderingContext2D;
   canvasPlaceholder?: HTMLDivElement | null;

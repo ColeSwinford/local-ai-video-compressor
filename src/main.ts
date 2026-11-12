@@ -3,7 +3,7 @@ import type { CompressorPipeline } from './pipeline/compressor';
 import { initModal } from './ui/modal';
 import { setStatus, updateProgress, logMessage } from './ui/progress';
 import { triggerDownload } from './utils/formatters';
-import type { LogType, StatusState } from './types';
+import type { AudioMode, LogType, StatusState } from './types';
 
 // Re-export helpers for backwards compatibility
 export { getTrueDuration, getValidDuration, formatBytes } from './utils/formatters';
@@ -26,6 +26,7 @@ let outputVideoPlayer: HTMLVideoElement;
 
 let resolutionSelect: HTMLSelectElement;
 let fpsSelect: HTMLSelectElement;
+let audioSelect: HTMLSelectElement;
 let targetSizeRange: HTMLInputElement;
 let targetSizeNumber: HTMLInputElement;
 
@@ -236,6 +237,7 @@ async function processFile(file: File) {
 
   const resMode = resolutionSelect?.value || 'auto';
   const selectedFps = fpsSelect?.value || 'auto';
+  const audioMode = (audioSelect?.value || 'passthrough') as AudioMode;
 
   try {
     const result = await activePipeline.processFile({
@@ -243,6 +245,7 @@ async function processFile(file: File) {
       targetMB: selectedTargetSizeMB,
       resMode,
       selectedFps,
+      audioMode,
       canvas,
       canvasCtx,
       canvasPlaceholder,
@@ -337,6 +340,7 @@ function initApp() {
 
   resolutionSelect = document.getElementById('resolution-select') as HTMLSelectElement;
   fpsSelect = document.getElementById('fps-select') as HTMLSelectElement;
+  audioSelect = document.getElementById('audio-select') as HTMLSelectElement;
   targetSizeRange = document.getElementById('target-size-range') as HTMLInputElement;
   targetSizeNumber = document.getElementById('target-size-number') as HTMLInputElement;
 
